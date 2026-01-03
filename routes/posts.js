@@ -109,4 +109,78 @@ router.post('/:id/comments', auth, async (req, res) => {
   }
 });
 
+// Delete post
+router.delete('/:id', auth, async (req, res) => {
+  try {
+    const post = await Post.findById(req.params.id);
+
+    if (!post) {
+      return res.status(404).json({ error: 'Post not found' });
+    }
+
+    // Check if user is the author
+    if (post.author.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ error: 'Not authorized to delete this post' });
+    }
+
+    await Post.findByIdAndDelete(req.params.id);
+    res.json({ message: 'Post deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Delete comment
+router.delete('/:postId/comments/:commentId', auth, async (req, res) => {
+  try {
+    const { postId, commentId } = req.params;
+    const post = await Post.findById(postId);
+
+    if (!post) {
+      return res.status(404).json({ error: 'Post not found' });
+    }
+
+    // Find the comment
+    const commentIndex = post.comments.findIndex(
+      comment => comment._id.toString() === commentId
+    );
+
+    if (commentIndex === -1) {
+      return res.status(404).json({ error: 'Comment not found' });
+    }
+
+    const comment = post.comments[commentIndex];
+
+    // Check if user is the author of the comment
+    if (comment.author.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ error: 'Not authorized to delete this comment' });
+    }
+
+    // Remove the comment
+    post.comments.splice(commentIndex, 1);
+    post.commentCount -= 1;
+    await post.save();
+
+    res.json({ message: 'Comment deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get posts by user
+router.get('/user/:username', async (req, res) => {
+  try {
+    const { username } = req.params;
+    
+    const posts = await Post.find({ authorName: username })
+      .sort({ createdAt: -1 })
+      .populate('author', 'username')
+      .limit(50);
+
+    res.json({ posts });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 module.exports = router;
