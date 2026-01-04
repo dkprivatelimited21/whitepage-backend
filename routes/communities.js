@@ -160,4 +160,36 @@ router.get('/:name', async (req, res) => {
   }
 });
 
+// Check if community exists
+router.get('/check/:name', async (req, res) => {
+  try {
+    const community = await Community.findOne({ name: req.params.name });
+    
+    if (!community) {
+      return res.status(404).json({
+        success: false,
+        exists: false,
+        error: 'Community not found'
+      });
+    }
+    
+    res.json({
+      success: true,
+      exists: true,
+      community: {
+        name: community.name,
+        displayName: community.displayName,
+        description: community.description,
+        memberCount: community.memberCount
+      }
+    });
+  } catch (error) {
+    console.error('Error checking community:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to check community'
+    });
+  }
+});
+
 module.exports = router;

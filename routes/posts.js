@@ -272,4 +272,174 @@ router.get('/user/:username', async (req, res) => {
   }
 });
 
+// Add these routes to your posts.js file
+
+// Get comments for a post with nested replies
+router.get('/:id/comments', async (req, res) => {
+  try {
+    const { sort = 'best', limit = 100 } = req.query;
+    
+    let sortOption = {};
+    if (sort === 'new') {
+      sortOption = { createdAt: -1 };
+    } else if (sort === 'old') {
+      sortOption = { createdAt: 1 };
+    } else {
+      // Best - sort by vote count
+      sortOption = { voteCount: -1, createdAt: -1 };
+    }
+
+    const comments = await Comment.find({ 
+      post: req.params.id,
+      parentComment: null 
+    })
+    .sort(sortOption)
+    .limit(parseInt(limit))
+    .populate('author', 'username')
+    .populate({
+      path: 'replies',
+      populate: {
+        path: 'author',
+        select: 'username'
+      }
+    });
+
+    res.json({ success: true, comments });
+  } catch (error) {
+    console.error('Error fetching comments:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch comments' });
+  }
+});
+
+// Add nested comment
+router.post('/:postId/comments/:commentId/reply', auth, async (req, res) => {
+  try {
+    const { content } = req.body;
+    const { postId, commentId } = req.params;
+
+    // Find parent comment
+    const parentComment = await Comment.findById(commentId);
+    if (!parentComment) {
+      return res.status(404).json({ error: 'Comment not found' });
+    }
+
+    // Create reply
+    const reply = new Comment({
+      content,
+      author: req.user._id,
+      authorName: req.user.username,
+      post: postId,
+      parentComment: commentId,
+      depth: parentComment.depth + 1
+    });
+
+    await reply.save();
+
+    // Add reply to parent's replies array
+    parentComment.replies.push(reply._id);
+    await parentComment.save();
+
+    // Create notification for parent comment author
+    if (parentComment.author.toString() !== req.user._id.toString()) {
+      await Notification.create({
+        user: parentComment.author,
+        type: 'comment_reply',
+        sender: req.user._id,
+        senderName: req.user.username,
+        post: postId,
+        comment: reply._id,
+        message: `${req.user.username} replied to your comment`,
+        link: `/post/${postId}#comment-${reply._id}`
+      });
+    }
+
+    res.status(201).json({ success: true, comment: reply });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Vote on comment
+router.post('/comments/:commentId/vote', auth, async (req, res) => {
+  try {
+    const { type } = req.body; // 'upvote' or 'downvote'
+    const { commentId } = req.params;
+
+    const comment = await Comment.findById(commentId);
+    if (!comment) {
+      return res.status(404).json({ error: 'Comment not found' });
+    }
+
+    // Remove existing votes
+    comment.upvotes = comment.upvotes.filter(
+      id => id.toString() !== req.user._id.toString()
+    );
+    comment.downvotes = comment.downvotes.filter(
+      id => id.toString() !== req.user._id.toString()
+    );
+
+    // Add new vote
+    if (type === 'upvote') {
+      comment.upvotes.push(req.user._id);
+      
+      // Create notification for upvote
+      if (comment.author.toString() !== req.user._id.toString()) {
+        await Notification.create({
+          user: comment.author,
+          type: 'upvote',
+          sender: req.user._id,
+          senderName: req.user.username,
+          post: comment.post,
+          comment: comment._id,
+          message: `${req.user.username} upvoted your comment`,
+          link: `/post/${comment.post}#comment-${comment._id}`
+        });
+      }
+    } else if (type === 'downvote') {
+      comment.downvotes.push(req.user._id);
+    }
+
+    await comment.save();
+
+    res.json({ 
+      success: true, 
+      upvotes: comment.upvotes.length,
+      downvotes: comment.downvotes.length,
+      voteCount: comment.voteCount
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Get user's posts
+router.get('/user/:username/posts', async (req, res) => {
+  try {
+    const { username } = req.params;
+    const { page = 1, limit = 10 } = req.query;
+
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const skip = (pageNum - 1) * limitNum;
+
+    const posts = await Post.find({ authorName: username })
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limitNum)
+      .populate('author', 'username');
+
+    const total = await Post.countDocuments({ authorName: username });
+
+    res.json({
+      success: true,
+      posts,
+      page: pageNum,
+      totalPages: Math.ceil(total / limitNum),
+      totalPosts: total
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 module.exports = router;
