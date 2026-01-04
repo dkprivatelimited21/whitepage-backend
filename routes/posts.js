@@ -14,13 +14,13 @@ router.get('/', async (req, res) => {
     }
 
     let sortOption = {};
-if (sort === 'hot') {
-  sortOption = { votes: -1, createdAt: -1 };  // Sort by votes then recency
-} else if (sort === 'top') {
-  sortOption = { votes: -1 };  // Sort by votes only
-} else {
-  sortOption = { createdAt: -1 }; // new
-}
+    if (sort === 'hot') {
+      sortOption = { votes: -1 };
+    } else if (sort === 'top') {
+      sortOption = { votes: -1 };
+    } else {
+      sortOption = { createdAt: -1 }; // new
+    }
 
     const pageNum = parseInt(page);
     const limitNum = parseInt(limit);
@@ -60,8 +60,84 @@ router.get('/subreddits', async (req, res) => {
   }
 });
 
+// GET /api/posts/trending - Get trending posts
+// MUST BE BEFORE THE /:id ROUTE!
+router.get('/trending', async (req, res) => {
+  try {
+    // Get posts from the last 48 hours for trending
+    const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
+    
+    const posts = await Post.find({
+      createdAt: { $gte: twoDaysAgo }
+    })
+    .populate('author', 'username')
+    .sort({ createdAt: -1 })
+    .limit(20); // Get recent posts first
+    
+    // Calculate trending score for each post
+    const postsWithScore = posts.map(post => {
+      const hoursSinceCreated = (Date.now() - new Date(post.createdAt).getTime()) / (1000 * 60 * 60);
+      
+      // Calculate score: upvotes + comments - age penalty
+      const upvoteCount = post.upvotes ? post.upvotes.length : 0;
+      const commentCount = post.commentCount || 0;
+      const score = (upvoteCount * 2) + commentCount - (hoursSinceCreated * 0.2);
+      
+      return {
+        ...post.toObject(),
+        trendingScore: score
+      };
+    });
+    
+    // Sort by trending score
+    postsWithScore.sort((a, b) => b.trendingScore - a.trendingScore);
+    
+    // Take top 5
+    const trendingPostsResult = postsWithScore.slice(0, 5);
+    
+    res.json({
+      success: true,
+      posts: trendingPostsResult
+    });
+  } catch (error) {
+    console.error('Error fetching trending posts:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch trending posts'
+    });
+  }
+});
+
+// Alternative simpler trending algorithm
+router.get('/trending/simple', async (req, res) => {
+  try {
+    // Get posts from the last 7 days
+    const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    
+    const trendingPosts = await Post.find({
+      createdAt: { $gte: oneWeekAgo }
+    })
+    .populate('author', 'username')
+    .sort({ 
+      // Sort by upvotes first, then comments, then recency
+      createdAt: -1
+    })
+    .limit(5);
+    
+    res.json({
+      success: true,
+      posts: trendingPosts
+    });
+  } catch (error) {
+    console.error('Error fetching trending posts:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch trending posts'
+    });
+  }
+});
+
 // Create post
-// In posts.js, update the create post route (lines 34-49):
 router.post('/', auth, async (req, res) => {
   try {
     const { title, content, subreddit } = req.body;
@@ -71,8 +147,7 @@ router.post('/', auth, async (req, res) => {
       content,
       subreddit: subreddit.toLowerCase(),
       author: req.user._id,
-      authorName: req.user.username,  // ADD THIS LINE
-      votes: 0  // Initialize votes
+      authorName: req.user.username
     });
 
     await post.save();
@@ -82,7 +157,7 @@ router.post('/', auth, async (req, res) => {
   }
 });
 
-// Get single post
+// Get single post - THIS MUST BE AFTER ALL OTHER SPECIFIC ROUTES!
 router.get('/:id', async (req, res) => {
   try {
     const post = await Post.findById(req.params.id)
@@ -196,84 +271,5 @@ router.get('/user/:username', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
-
-// GET /api/posts/trending - Get trending posts
-router.get('/trending', async (req, res) => {
-  try {
-    // Get posts from the last 48 hours for trending
-    const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
-    
-    const posts = await Post.find({
-      createdAt: { $gte: twoDaysAgo }
-    })
-    .populate('author', 'username')
-    .sort({ createdAt: -1 })
-    .limit(20); // Get recent posts first
-    
-    // Calculate trending score for each post
-    const postsWithScore = posts.map(post => {
-      const hoursSinceCreated = (Date.now() - new Date(post.createdAt).getTime()) / (1000 * 60 * 60);
-      
-      // Calculate score: upvotes + comments - age penalty
-      const upvoteCount = post.upvotes ? post.upvotes.length : 0;
-      const commentCount = post.commentCount || 0;
-      const score = (upvoteCount * 2) + commentCount - (hoursSinceCreated * 0.2);
-      
-      return {
-        ...post.toObject(),
-        trendingScore: score
-      };
-    });
-    
-    // Sort by trending score
-    postsWithScore.sort((a, b) => b.trendingScore - a.trendingScore);
-    
-    // Take top 5
-    const trendingPostsResult = postsWithScore.slice(0, 5);
-    
-    res.json({
-      success: true,
-      posts: trendingPostsResult
-    });
-  } catch (error) {
-    console.error('Error fetching trending posts:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch trending posts'
-    });
-  }
-});
-
-// Alternative simpler trending algorithm
-router.get('/trending/simple', async (req, res) => {
-  try {
-    // Get posts from the last 7 days
-    const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-    
-    const trendingPosts = await Post.find({
-      createdAt: { $gte: oneWeekAgo }
-    })
-    .populate('author', 'username')
-    .sort({ 
-      // Sort by upvotes first, then comments, then recency
-      createdAt: -1
-    })
-    .limit(5);
-    
-    res.json({
-      success: true,
-      posts: trendingPosts
-    });
-  } catch (error) {
-    console.error('Error fetching trending posts:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch trending posts'
-    });
-  }
-});
-
-// GET /api/posts with pagination (duplicate route - needs to be merged or removed)
-// Note: You already have a GET / route at the top, so this needs to be merged
 
 module.exports = router;
