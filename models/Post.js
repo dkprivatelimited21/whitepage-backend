@@ -1,72 +1,73 @@
+// models/Post.js
 const mongoose = require('mongoose');
 
 const postSchema = new mongoose.Schema({
   title: {
     type: String,
     required: true,
-    trim: true,
-    maxlength: 300
+    trim: true
   },
   content: {
     type: String,
-    trim: true,
-    maxlength: 40000
+    required: true
   },
   author: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
     required: true
   },
-  authorName: {
+  community: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Community',
+    required: true
+  },
+  // Keep subreddit for backward compatibility
+  subreddit: {
     type: String,
     required: true
   },
-  subreddit: {
-    type: String,
-    required: true,
-    trim: true,
-    maxlength: 50
-  },
-  votes: {
-    type: Number,
-    default: 0
-  },
-  upvotedBy: [{
+  upvotes: [{
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
   }],
-  downvotedBy: [{
+  downvotes: [{
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
   }],
   comments: [{
-    author: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User'
-    },
-    authorName: String,
-    content: {
-      type: String,
-      required: true,
-      maxlength: 10000
-    },
-    votes: {
-      type: Number,
-      default: 0
-    },
-    createdAt: {
-      type: Date,
-      default: Date.now
-    }
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Comment'
   }],
+  score: {
+    type: Number,
+    default: 0
+  },
   commentCount: {
     type: Number,
     default: 0
   },
-  createdAt: {
-    type: Date,
-    default: Date.now
+  isLocked: {
+    type: Boolean,
+    default: false
+  },
+  isArchived: {
+    type: Boolean,
+    default: false
   }
+}, {
+  timestamps: true
 });
+
+// Middleware to update score and comment count
+postSchema.pre('save', function(next) {
+  this.score = this.upvotes.length - this.downvotes.length;
+  this.commentCount = this.comments ? this.comments.length : 0;
+  next();
+});
+
+// Index for better query performance
+postSchema.index({ community: 1, createdAt: -1 });
+postSchema.index({ score: -1, createdAt: -1 });
+postSchema.index({ commentCount: -1, createdAt: -1 });
 
 module.exports = mongoose.model('Post', postSchema);

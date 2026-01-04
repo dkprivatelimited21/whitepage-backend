@@ -1,3 +1,4 @@
+// models/Community.js
 const mongoose = require('mongoose');
 
 const communitySchema = new mongoose.Schema({
@@ -5,23 +6,21 @@ const communitySchema = new mongoose.Schema({
     type: String,
     required: true,
     unique: true,
-    lowercase: true,
     trim: true,
-    minlength: 3,
-    maxlength: 21
+    lowercase: true
   },
   displayName: {
     type: String,
-    required: true,
-    trim: true,
-    maxlength: 50
+    required: true
   },
   description: {
     type: String,
-    trim: true,
-    maxlength: 500
+    required: true
   },
-  owner: {
+  rules: [{
+    type: String
+  }],
+  createdBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
     required: true
@@ -32,35 +31,33 @@ const communitySchema = new mongoose.Schema({
   }],
   members: [{
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    default: []
+    ref: 'User'
   }],
   memberCount: {
     type: Number,
-    default: 1
+    default: 1 // Starts with creator as member
+  },
+  postCount: {
+    type: Number,
+    default: 0
   },
   isPublic: {
     type: Boolean,
     default: true
-  },
-  isNSFW: {
-    type: Boolean,
-    default: false
-  },
-  rules: [{
-    title: String,
-    description: String
-  }],
-  createdAt: {
-    type: Date,
-    default: Date.now
-  },
-  icon: String,
-  banner: String,
-  primaryColor: {
-    type: String,
-    default: '#FF4500'
   }
+}, {
+  timestamps: true
+});
+
+// Virtual for member count
+communitySchema.virtual('memberCount').get(function() {
+  return this.members ? this.members.length : 0;
+});
+
+// Middleware to update member count
+communitySchema.pre('save', function(next) {
+  this.memberCount = this.members ? this.members.length : 0;
+  next();
 });
 
 module.exports = mongoose.model('Community', communitySchema);

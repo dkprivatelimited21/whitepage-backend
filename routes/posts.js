@@ -183,4 +183,116 @@ router.get('/user/:username', async (req, res) => {
   }
 });
 
+// GET /api/posts/trending - Get trending posts
+router.get('/trending', async (req, res) => {
+  try {
+    const trendingPosts = await Post.find()
+      .populate('author', 'username')
+      .populate('community', 'name')
+      .sort({ 
+        // Sort by a combination of upvotes, comments, and recency
+        // You can adjust these weights based on your preference
+        // score = (upvotes * 2) + comments + (hoursSinceCreated * -0.1)
+      })
+      .limit(5); // Limit to 5 trending posts
+    
+    // Alternative: Calculate trending score
+    const posts = await Post.find()
+      .populate('author', 'username')
+      .populate('community', 'name')
+      .sort({ createdAt: -1 })
+      .limit(20); // Get recent posts first
+    
+    // Calculate trending score for each post
+    const postsWithScore = posts.map(post => {
+      const hoursSinceCreated = (Date.now() - new Date(post.createdAt).getTime()) / (1000 * 60 * 60);
+      const score = post.upvotes.length * 2 + (post.comments?.length || 0) - hoursSinceCreated * 0.1;
+      
+      return {
+        ...post.toObject(),
+        trendingScore: score
+      };
+    });
+    
+    // Sort by trending score
+    postsWithScore.sort((a, b) => b.trendingScore - a.trendingScore);
+    
+    // Take top 5
+    const trendingPosts = postsWithScore.slice(0, 5);
+    
+    res.json({
+      success: true,
+      posts: trendingPosts
+    });
+  } catch (error) {
+    console.error('Error fetching trending posts:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch trending posts'
+    });
+  }
+});
+
+// Alternative simpler trending algorithm
+router.get('/trending/simple', async (req, res) => {
+  try {
+    const trendingPosts = await Post.find()
+      .populate('author', 'username')
+      .populate('community', 'name')
+      .sort({ 
+        // Sort by upvotes first, then comments, then recency
+        upvotes: -1,
+        comments: -1,
+        createdAt: -1
+      })
+      .limit(5);
+    
+    res.json({
+      success: true,
+      posts: trendingPosts
+    });
+  } catch (error) {
+    console.error('Error fetching trending posts:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch trending posts'
+    });
+  }
+});
+
+// GET /api/posts - Get all posts with pagination
+router.get('/', async (req, res) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const skip = (page - 1) * limit;
+    
+    const posts = await Post.find()
+      .populate('author', 'username')
+      .populate('community', 'name')
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit);
+    
+    const total = await Post.countDocuments();
+    
+    res.json({
+      success: true,
+      posts: posts,
+      page: page,
+      totalPages: Math.ceil(total / limit),
+      totalPosts: total
+    });
+  } catch (error) {
+    console.error('Error fetching posts:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch posts'
+    });
+  }
+});
+
+
+
+
 module.exports = router;
