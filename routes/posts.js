@@ -6,7 +6,7 @@ const Post = require('../models/Post');
 // Get all posts (with optional subreddit filter)
 router.get('/', async (req, res) => {
   try {
-    const { subreddit, sort = 'new' } = req.query;
+    const { subreddit, sort = 'new', page = 1, limit = 10 } = req.query;
     let query = {};
     
     if (subreddit) {
@@ -22,12 +22,24 @@ router.get('/', async (req, res) => {
       sortOption = { createdAt: -1 }; // new
     }
 
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const skip = (pageNum - 1) * limitNum;
+
     const posts = await Post.find(query)
       .sort(sortOption)
-      .limit(50)
+      .skip(skip)
+      .limit(limitNum)
       .populate('author', 'username karma');
 
-    res.json({ posts });
+    const total = await Post.countDocuments(query);
+
+    res.json({ 
+      posts,
+      page: pageNum,
+      totalPages: Math.ceil(total / limitNum),
+      totalPosts: total
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -186,27 +198,24 @@ router.get('/user/:username', async (req, res) => {
 // GET /api/posts/trending - Get trending posts
 router.get('/trending', async (req, res) => {
   try {
-    const trendingPosts = await Post.find()
-      .populate('author', 'username')
-      .populate('community', 'name')
-      .sort({ 
-        // Sort by a combination of upvotes, comments, and recency
-        // You can adjust these weights based on your preference
-        // score = (upvotes * 2) + comments + (hoursSinceCreated * -0.1)
-      })
-      .limit(5); // Limit to 5 trending posts
+    // Get posts from the last 48 hours for trending
+    const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
     
-    // Alternative: Calculate trending score
-    const posts = await Post.find()
-      .populate('author', 'username')
-      .populate('community', 'name')
-      .sort({ createdAt: -1 })
-      .limit(20); // Get recent posts first
+    const posts = await Post.find({
+      createdAt: { $gte: twoDaysAgo }
+    })
+    .populate('author', 'username')
+    .sort({ createdAt: -1 })
+    .limit(20); // Get recent posts first
     
     // Calculate trending score for each post
     const postsWithScore = posts.map(post => {
       const hoursSinceCreated = (Date.now() - new Date(post.createdAt).getTime()) / (1000 * 60 * 60);
-      const score = post.upvotes.length * 2 + (post.comments?.length || 0) - hoursSinceCreated * 0.1;
+      
+      // Calculate score: upvotes + comments - age penalty
+      const upvoteCount = post.upvotes ? post.upvotes.length : 0;
+      const commentCount = post.commentCount || 0;
+      const score = (upvoteCount * 2) + commentCount - (hoursSinceCreated * 0.2);
       
       return {
         ...post.toObject(),
@@ -218,11 +227,11 @@ router.get('/trending', async (req, res) => {
     postsWithScore.sort((a, b) => b.trendingScore - a.trendingScore);
     
     // Take top 5
-    const trendingPosts = postsWithScore.slice(0, 5);
+    const trendingPostsResult = postsWithScore.slice(0, 5);
     
     res.json({
       success: true,
-      posts: trendingPosts
+      posts: trendingPostsResult
     });
   } catch (error) {
     console.error('Error fetching trending posts:', error);
@@ -236,16 +245,18 @@ router.get('/trending', async (req, res) => {
 // Alternative simpler trending algorithm
 router.get('/trending/simple', async (req, res) => {
   try {
-    const trendingPosts = await Post.find()
-      .populate('author', 'username')
-      .populate('community', 'name')
-      .sort({ 
-        // Sort by upvotes first, then comments, then recency
-        upvotes: -1,
-        comments: -1,
-        createdAt: -1
-      })
-      .limit(5);
+    // Get posts from the last 7 days
+    const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    
+    const trendingPosts = await Post.find({
+      createdAt: { $gte: oneWeekAgo }
+    })
+    .populate('author', 'username')
+    .sort({ 
+      // Sort by upvotes first, then comments, then recency
+      createdAt: -1
+    })
+    .limit(5);
     
     res.json({
       success: true,
@@ -260,39 +271,7 @@ router.get('/trending/simple', async (req, res) => {
   }
 });
 
-// GET /api/posts - Get all posts with pagination
-router.get('/', async (req, res) => {
-  try {
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10;
-    const skip = (page - 1) * limit;
-    
-    const posts = await Post.find()
-      .populate('author', 'username')
-      .populate('community', 'name')
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit);
-    
-    const total = await Post.countDocuments();
-    
-    res.json({
-      success: true,
-      posts: posts,
-      page: page,
-      totalPages: Math.ceil(total / limit),
-      totalPosts: total
-    });
-  } catch (error) {
-    console.error('Error fetching posts:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to fetch posts'
-    });
-  }
-});
-
-
-
+// GET /api/posts with pagination (duplicate route - needs to be merged or removed)
+// Note: You already have a GET / route at the top, so this needs to be merged
 
 module.exports = router;
