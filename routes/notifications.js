@@ -39,6 +39,23 @@ router.get('/', auth, async (req, res) => {
   }
 });
 
+// Get unread notifications count ONLY
+router.get('/unread-count', auth, async (req, res) => {
+  try {
+    const unreadCount = await Notification.countDocuments({ 
+      user: req.user._id, 
+      isRead: false 
+    });
+    
+    res.json({ success: true, count: unreadCount });
+  } catch (error) {
+    console.error('Error fetching unread count:', error);
+    res.status(500).json({ success: false, error: 'Failed to fetch unread count' });
+  }
+});
+
+
+
 // Mark notification as read
 router.patch('/:id/read', auth, async (req, res) => {
   try {
