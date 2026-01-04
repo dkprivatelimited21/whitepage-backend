@@ -14,13 +14,13 @@ router.get('/', async (req, res) => {
     }
 
     let sortOption = {};
-    if (sort === 'hot') {
-      sortOption = { votes: -1 };
-    } else if (sort === 'top') {
-      sortOption = { votes: -1 };
-    } else {
-      sortOption = { createdAt: -1 }; // new
-    }
+if (sort === 'hot') {
+  sortOption = { votes: -1, createdAt: -1 };  // Sort by votes then recency
+} else if (sort === 'top') {
+  sortOption = { votes: -1 };  // Sort by votes only
+} else {
+  sortOption = { createdAt: -1 }; // new
+}
 
     const pageNum = parseInt(page);
     const limitNum = parseInt(limit);
@@ -61,6 +61,7 @@ router.get('/subreddits', async (req, res) => {
 });
 
 // Create post
+// In posts.js, update the create post route (lines 34-49):
 router.post('/', auth, async (req, res) => {
   try {
     const { title, content, subreddit } = req.body;
@@ -70,7 +71,8 @@ router.post('/', auth, async (req, res) => {
       content,
       subreddit: subreddit.toLowerCase(),
       author: req.user._id,
-      authorName: req.user.username
+      authorName: req.user.username,  // ADD THIS LINE
+      votes: 0  // Initialize votes
     });
 
     await post.save();

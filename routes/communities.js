@@ -28,7 +28,7 @@ router.post('/', auth, async (req, res) => {
       name,
       displayName,
       description,
-      owner: req.user.id,
+      createdBy: req.user.id,  // Fixed: changed from 'owner'
       moderators: [req.user.id],
       members: [req.user.id],
       isPublic: isPublic !== false,
@@ -40,37 +40,6 @@ router.post('/', auth, async (req, res) => {
     res.status(201).json({ community });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
-
-// Get all communities
-router.get('/', async (req, res) => {
-  try {
-    const communities = await Community.find()
-      .sort({ memberCount: -1 })
-      .limit(50)
-      .populate('owner', 'username');
-    
-    res.json({ communities });
-  } catch (error) {
-    res.status(500).json({ error: 'Server error' });
-  }
-});
-
-// Get single community
-router.get('/:name', async (req, res) => {
-  try {
-    const community = await Community.findOne({ name: req.params.name })
-      .populate('owner', 'username')
-      .populate('moderators', 'username');
-    
-    if (!community) {
-      return res.status(404).json({ error: 'Community not found' });
-    }
-    
-    res.json({ community });
-  } catch (error) {
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -107,7 +76,7 @@ router.post('/:name/leave', auth, async (req, res) => {
       return res.status(404).json({ error: 'Community not found' });
     }
     
-    if (community.owner.toString() === req.user.id) {
+    if (community.createdBy.toString() === req.user.id) {  // Fixed: changed from 'owner'
       return res.status(400).json({ error: 'Owner cannot leave community' });
     }
     
@@ -190,8 +159,5 @@ router.get('/:name', async (req, res) => {
     });
   }
 });
-
-
-
 
 module.exports = router;
