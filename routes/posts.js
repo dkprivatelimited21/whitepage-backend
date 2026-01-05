@@ -5,24 +5,16 @@ const Post = require('../models/Post');
 const Comment = require('../models/Comment');
 const Notification = require('../models/Notification');
 
-// Get all posts (with optional subreddit filter)
-router.get('/', async (req, res) => {
+router.get('/', async (req, res, next) => {
   try {
     const { subreddit, sort = 'new', page = 1, limit = 10 } = req.query;
     let query = {};
     
-    if (subreddit) {
-      query.subreddit = subreddit.toLowerCase();
-    }
+    if (subreddit) query.subreddit = subreddit.toLowerCase();
 
     let sortOption = {};
-    if (sort === 'hot') {
-      sortOption = { votes: -1 };
-    } else if (sort === 'top') {
-      sortOption = { votes: -1 };
-    } else {
-      sortOption = { createdAt: -1 }; // new
-    }
+    if (sort === 'hot' || sort === 'top') sortOption = { votes: -1 };
+    else sortOption = { createdAt: -1 };
 
     const pageNum = parseInt(page);
     const limitNum = parseInt(limit);
@@ -34,25 +26,30 @@ router.get('/', async (req, res) => {
       .limit(limitNum)
       .populate('author', 'username karma');
 
-const normalizedPosts = posts.map(post => ({
-  _id: post._id,
-  title: post.title,
-  content: post.content,
-  subreddit: post.subreddit,
-  createdAt: post.createdAt || new Date(),
+    const normalizedPosts = posts.map(post => ({
+      _id: post._id,
+      title: post.title,
+      content: post.content,
+      subreddit: post.subreddit,
+      createdAt: post.createdAt || new Date(),
+      authorId: post.author?._id,
+      authorName: post.author?.username,
+      authorKarma: post.author?.karma
+    }));
 
-  authorId: post.author?._id,
-  authorName: post.author?.username,
-  authorKarma: post.author?.karma
-}));
-
-return res.json({ posts: normalizedPosts });
+    // Send the response once
+    if (!res.headersSent) {
+      return res.json({ posts: normalizedPosts });
+    }
 
   } catch (error) {
     console.error(error);
-    return res.status(500).json({ message: 'Server error' });
+    if (!res.headersSent) {
+      return res.status(500).json({ message: 'Server error' });
+    }
   }
 });
+
 
     const total = await Post.countDocuments(query);
 
