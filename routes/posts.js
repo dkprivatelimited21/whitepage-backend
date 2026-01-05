@@ -9,7 +9,6 @@ router.get('/', async (req, res, next) => {
   try {
     const { subreddit, sort = 'new', page = 1, limit = 10 } = req.query;
     let query = {};
-    
     if (subreddit) query.subreddit = subreddit.toLowerCase();
 
     let sortOption = {};
@@ -37,18 +36,20 @@ router.get('/', async (req, res, next) => {
       authorKarma: post.author?.karma
     }));
 
-    // Send the response once
+    // Make sure headers aren't already sent
     if (!res.headersSent) {
       return res.json({ posts: normalizedPosts });
     }
-
+    
   } catch (error) {
     console.error(error);
+    // Only send error response if headers not sent
     if (!res.headersSent) {
       return res.status(500).json({ message: 'Server error' });
     }
   }
 });
+
 
 
     const total = await Post.countDocuments(query);
