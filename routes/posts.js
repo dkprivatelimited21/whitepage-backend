@@ -4,7 +4,7 @@ const auth = require('../middleware/auth');
 const Post = require('../models/Post');
 const Comment = require('../models/Comment');
 const Notification = require('../models/Notification');
-import User from '../models/User.js';
+const User = require('../models/User');  // Fixed: Changed from import to require
 
 router.get('/', async (req, res, next) => {
   try {
@@ -303,23 +303,6 @@ router.delete('/:postId/comments/:commentId', auth, async (req, res) => {
   }
 });
 
-
-// Get posts by user
-router.get('/user/:username', async (req, res) => {
-  try {
-    const { username } = req.params;
-    
-    const posts = await Post.find({ authorName: username })
-      .sort({ createdAt: -1 })
-      .populate('author', 'username')
-      .limit(50);
-
-    res.json({ posts });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
 // Get comments for a post (top-level + replies)
 router.get('/:id/comments', async (req, res) => {
   try {
@@ -518,6 +501,7 @@ router.get('/user/:username/posts', async (req, res) => {
   }
 });
 
+// Get user profile with posts
 router.get('/user/:username', async (req, res) => {
   try {
     const { username } = req.params;
