@@ -34,6 +34,21 @@ router.get('/', async (req, res) => {
       .limit(limitNum)
       .populate('author', 'username karma');
 
+const normalizedPosts = posts.map(post => ({
+  _id: post._id,
+  title: post.title,
+  content: post.content,
+  subreddit: post.subreddit,
+  createdAt: post.createdAt || new Date(),
+
+  authorId: post.author?._id,
+  authorName: post.author?.username,
+  authorKarma: post.author?.karma
+}));
+
+res.json({ posts: normalizedPosts });
+
+
     const total = await Post.countDocuments(query);
 
     res.json({ 
