@@ -55,9 +55,11 @@ const totalComments = await Comment.countDocuments({
 
    const normalizedComments = comments.map(comment => ({
   ...comment.toObject(),
+createdAt: comment.createdAt || new Date(),
   authorName: comment.author?.username || '[deleted]',
   replies: (comment.replies || []).map(reply => ({
     ...reply.toObject(),
+createdAt: reply.createdAt || new Date(),
     authorName: reply.author?.username || '[deleted]'
   }))
 }));
