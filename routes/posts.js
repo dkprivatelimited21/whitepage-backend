@@ -175,30 +175,54 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// Add comment
+// Add comment (NEW Comment model system)
 router.post('/:id/comments', auth, async (req, res) => {
   try {
     const { content } = req.body;
-    const post = await Post.findById(req.params.id);
+    const postId = req.params.id;
 
+    if (!content || !content.trim()) {
+      return res.status(400).json({ error: 'Comment content is required' });
+    }
+
+    // Verify post exists
+    const post = await Post.findById(postId);
     if (!post) {
       return res.status(404).json({ error: 'Post not found' });
     }
 
-    post.comments.push({
+    // Create comment
+    const comment = new Comment({
+      content: content.trim(),
       author: req.user._id,
       authorName: req.user.username,
-      content
+      post: postId
     });
 
-    post.commentCount += 1;
+    await comment.save();
+
+    // Update post comment count
+    post.commentCount = (post.commentCount || 0) + 1;
     await post.save();
 
-    res.status(201).json({ comments: post.comments });
+    // Populate author before sending
+    const populatedComment = await Comment.findById(comment._id)
+      .populate('author', 'username')
+      .lean();
+
+    res.status(201).json({
+      success: true,
+      comment: populatedComment
+    });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error('Error creating comment:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to create comment'
+    });
   }
 });
+
 
 // Delete post
 router.delete('/:id', auth, async (req, res) => {
@@ -222,41 +246,53 @@ router.delete('/:id', auth, async (req, res) => {
 });
 
 // Delete comment
+// Delete comment (and its replies)
 router.delete('/:postId/comments/:commentId', auth, async (req, res) => {
   try {
     const { postId, commentId } = req.params;
-    const post = await Post.findById(postId);
 
-    if (!post) {
-      return res.status(404).json({ error: 'Post not found' });
-    }
-
-    // Find the comment
-    const commentIndex = post.comments.findIndex(
-      comment => comment._id.toString() === commentId
-    );
-
-    if (commentIndex === -1) {
+    const comment = await Comment.findById(commentId);
+    if (!comment) {
       return res.status(404).json({ error: 'Comment not found' });
     }
 
-    const comment = post.comments[commentIndex];
-
-    // Check if user is the author of the comment
+    // Author-only delete
     if (comment.author.toString() !== req.user._id.toString()) {
       return res.status(403).json({ error: 'Not authorized to delete this comment' });
     }
 
-    // Remove the comment
-    post.comments.splice(commentIndex, 1);
-    post.commentCount -= 1;
-    await post.save();
+    // Count how many comments will be removed (comment + replies)
+    const repliesCount = await Comment.countDocuments({ parentComment: commentId });
 
-    res.json({ message: 'Comment deleted successfully' });
+    // Delete main comment
+    await Comment.findByIdAndDelete(commentId);
+
+    // Delete all direct replies
+    await Comment.deleteMany({ parentComment: commentId });
+
+    // Update post comment count correctly
+    const post = await Post.findById(postId);
+    if (post) {
+      post.commentCount = Math.max(
+        0,
+        (post.commentCount || 0) - (1 + repliesCount)
+      );
+      await post.save();
+    }
+
+    res.json({
+      success: true,
+      message: 'Comment deleted successfully'
+    });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error('Error deleting comment:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to delete comment'
+    });
   }
 });
+
 
 // Get posts by user
 router.get('/user/:username', async (req, res) => {
@@ -277,41 +313,72 @@ router.get('/user/:username', async (req, res) => {
 // Add these routes to your posts.js file
 
 // Get comments for a post with nested replies
+// Get comments for a post (top-level + replies)
 router.get('/:id/comments', async (req, res) => {
   try {
     const { sort = 'best', limit = 100 } = req.query;
-    
-    let sortOption = {};
-    if (sort === 'new') {
-      sortOption = { createdAt: -1 };
-    } else if (sort === 'old') {
-      sortOption = { createdAt: 1 };
-    } else {
-      // Best - sort by vote count
-      sortOption = { voteCount: -1, createdAt: -1 };
+
+    let sortOption;
+    switch (sort) {
+      case 'new':
+        sortOption = { createdAt: -1 };
+        break;
+      case 'old':
+        sortOption = { createdAt: 1 };
+        break;
+      case 'top':
+        sortOption = { voteCount: -1 };
+        break;
+      case 'best':
+      default:
+        sortOption = { voteCount: -1, createdAt: -1 };
     }
 
-    const comments = await Comment.find({ 
+    // Fetch top-level comments ONLY
+    const comments = await Comment.find({
       post: req.params.id,
-      parentComment: null 
+      parentComment: null
     })
-    .sort(sortOption)
-    .limit(parseInt(limit))
-    .populate('author', 'username')
-    .populate({
-      path: 'replies',
-      populate: {
-        path: 'author',
-        select: 'username'
-      }
-    });
+      .sort(sortOption)
+      .limit(parseInt(limit))
+      .populate('author', 'username avatar')
+      .lean();
 
-    res.json({ success: true, comments });
+    // Fetch replies for each comment
+    for (const comment of comments) {
+      const replies = await Comment.find({
+        parentComment: comment._id
+      })
+        .sort({ createdAt: 1 })
+        .populate('author', 'username avatar')
+        .lean();
+
+      // Calculate vote count for replies
+      replies.forEach(reply => {
+        reply.voteCount =
+          (reply.upvotes?.length || 0) - (reply.downvotes?.length || 0);
+      });
+
+      comment.replies = replies;
+
+      // Calculate vote count for top-level comment
+      comment.voteCount =
+        (comment.upvotes?.length || 0) - (comment.downvotes?.length || 0);
+    }
+
+    res.json({
+      success: true,
+      comments
+    });
   } catch (error) {
     console.error('Error fetching comments:', error);
-    res.status(500).json({ success: false, error: 'Failed to fetch comments' });
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch comments'
+    });
   }
 });
+
 
 // Add nested comment
 router.post('/:postId/comments/:commentId/reply', auth, async (req, res) => {

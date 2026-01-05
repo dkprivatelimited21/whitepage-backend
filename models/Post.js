@@ -28,6 +28,13 @@ const postSchema = new mongoose.Schema({
     type: String,
     required: true
   },
+
+  // 🔹 COMMENT COUNT (REQUIRED)
+  commentCount: {
+    type: Number,
+    default: 0
+  },
+
   upvotes: [{
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
@@ -52,10 +59,10 @@ const postSchema = new mongoose.Schema({
   timestamps: true
 });
 
-// Middleware to update votes
-postSchema.pre('save', function(next) {
-  const upvoteCount = this.upvotes ? this.upvotes.length : 0;
-  const downvoteCount = this.downvotes ? this.downvotes.length : 0;
+// Auto-calculate vote score
+postSchema.pre('save', function (next) {
+  const upvoteCount = this.upvotes?.length || 0;
+  const downvoteCount = this.downvotes?.length || 0;
   this.votes = upvoteCount - downvoteCount;
   next();
 });

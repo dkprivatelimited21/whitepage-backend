@@ -41,6 +41,10 @@ const commentSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
+depth: {
+  type: Number,
+  default: 0
+},
   isDeleted: {
     type: Boolean,
     default: false
@@ -51,7 +55,9 @@ const commentSchema = new mongoose.Schema({
 
 // Update voteCount before saving
 commentSchema.pre('save', function(next) {
-  this.voteCount = this.upvotes.length - this.downvotes.length;
+  const upvotesCount = this.upvotes ? this.upvotes.length : 0;
+  const downvotesCount = this.downvotes ? this.downvotes.length : 0;
+  this.voteCount = upvotesCount - downvotesCount;
   next();
 });
 
