@@ -36,9 +36,16 @@ router.get('/', async (req, res, next) => {
       authorKarma: post.author?.karma
     }));
 
+    const total = await Post.countDocuments(query);
+
     // Make sure headers aren't already sent
     if (!res.headersSent) {
-      return res.json({ posts: normalizedPosts });
+      return res.json({ 
+        posts: normalizedPosts,
+        page: pageNum,
+        totalPages: Math.ceil(total / limitNum),
+        totalPosts: total
+      });
     }
     
   } catch (error) {
@@ -47,21 +54,6 @@ router.get('/', async (req, res, next) => {
     if (!res.headersSent) {
       return res.status(500).json({ message: 'Server error' });
     }
-  }
-});
-
-
-
-    const total = await Post.countDocuments(query);
-
-    res.json({ 
-      posts,
-      page: pageNum,
-      totalPages: Math.ceil(total / limitNum),
-      totalPosts: total
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
   }
 });
 
@@ -263,7 +255,6 @@ router.delete('/:id', auth, async (req, res) => {
   }
 });
 
-// Delete comment
 // Delete comment (and its replies)
 router.delete('/:postId/comments/:commentId', auth, async (req, res) => {
   try {
@@ -328,9 +319,6 @@ router.get('/user/:username', async (req, res) => {
   }
 });
 
-// Add these routes to your posts.js file
-
-// Get comments for a post with nested replies
 // Get comments for a post (top-level + replies)
 router.get('/:id/comments', async (req, res) => {
   try {
