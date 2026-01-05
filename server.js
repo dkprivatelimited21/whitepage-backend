@@ -8,6 +8,7 @@ const postRoutes = require('./routes/posts');
 const voteRoutes = require('./routes/votes');
 const communityRoutes = require('./routes/communities');
 const notificationRoutes = require('./routes/notifications');
+const commentRoutes = require('./routes/comments'); // Add this line
 
 const app = express();
 
@@ -21,6 +22,7 @@ app.use('/api/posts', postRoutes);
 app.use('/api/votes', voteRoutes);
 app.use('/api/communities', communityRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/posts', commentRoutes); // This handles /api/posts/:postId/comments
 
 // Health check
 app.get('/health', (req, res) => {

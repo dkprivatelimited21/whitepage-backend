@@ -23,8 +23,7 @@ const commentSchema = new mongoose.Schema({
   },
   parentComment: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'Comment',
-    default: null
+    ref: 'Comment'
   },
   replies: [{
     type: mongoose.Schema.Types.ObjectId,
@@ -45,24 +44,15 @@ const commentSchema = new mongoose.Schema({
   isDeleted: {
     type: Boolean,
     default: false
-  },
-  depth: {
-    type: Number,
-    default: 0
   }
 }, {
   timestamps: true
 });
 
-// Middleware to update vote count
+// Update voteCount before saving
 commentSchema.pre('save', function(next) {
-  this.voteCount = (this.upvotes?.length || 0) - (this.downvotes?.length || 0);
+  this.voteCount = this.upvotes.length - this.downvotes.length;
   next();
 });
-
-// Index for better performance
-commentSchema.index({ post: 1, createdAt: -1 });
-commentSchema.index({ parentComment: 1 });
-commentSchema.index({ author: 1 });
 
 module.exports = mongoose.model('Comment', commentSchema);
