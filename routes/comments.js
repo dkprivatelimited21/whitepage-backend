@@ -37,7 +37,7 @@ router.get('/:postId/comments', async (req, res) => {
     // Fetch top-level comments (no parentComment)
     const comments = await Comment.find({ 
       post: postId,
-      parentComment: { $exists: false } // Only top-level comments
+      parentComment:  null // Only top-level comments
     })
     .sort(sortOption)
     .limit(parseInt(limit))
@@ -53,13 +53,23 @@ router.get('/:postId/comments', async (req, res) => {
       parentComment: { $exists: false }
     });
 
-    res.json({
-      success: true,
-      comments,
-      total: totalComments,
-      page: parseInt(page),
-      totalPages: Math.ceil(totalComments / parseInt(limit))
-    });
+   const normalizedComments = comments.map(comment => ({
+  ...comment.toObject(),
+  authorName: comment.author?.username || '[deleted]',
+  replies: (comment.replies || []).map(reply => ({
+    ...reply.toObject(),
+    authorName: reply.author?.username || '[deleted]'
+  }))
+}));
+
+res.json({
+  success: true,
+  comments: normalizedComments,
+  total: totalComments,
+  page: parseInt(page),
+  totalPages: Math.ceil(totalComments / parseInt(limit))
+});
+
   } catch (error) {
     console.error('Error fetching comments:', error);
     res.status(500).json({ success: false, error: 'Failed to fetch comments' });
