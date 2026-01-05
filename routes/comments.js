@@ -48,10 +48,10 @@ router.get('/:postId/comments', async (req, res) => {
       populate: { path: 'author', select: 'username avatar' }
     });
 
-    const totalComments = await Comment.countDocuments({ 
-      post: postId,
-      parentComment: { $exists: false }
-    });
+const totalComments = await Comment.countDocuments({ 
+  post: postId,
+  parentComment: null
+});
 
    const normalizedComments = comments.map(comment => ({
   ...comment.toObject(),
