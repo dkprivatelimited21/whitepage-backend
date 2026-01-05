@@ -46,8 +46,13 @@ const normalizedPosts = posts.map(post => ({
   authorKarma: post.author?.karma
 }));
 
-res.json({ posts: normalizedPosts });
+return res.json({ posts: normalizedPosts });
 
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ message: 'Server error' });
+  }
+});
 
     const total = await Post.countDocuments(query);
 
