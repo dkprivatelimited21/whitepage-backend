@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const auth = require('../middleware/auth');
 const Post = require('../models/Post');
+const Comment = require('../models/Comment');
 
 // Get all posts (with optional subreddit filter)
 router.get('/', async (req, res) => {
