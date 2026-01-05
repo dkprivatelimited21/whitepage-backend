@@ -4,6 +4,7 @@ const auth = require('../middleware/auth');
 const Post = require('../models/Post');
 const Comment = require('../models/Comment');
 const Notification = require('../models/Notification');
+import User from '../models/User.js';
 
 router.get('/', async (req, res, next) => {
   try {
@@ -514,6 +515,43 @@ router.get('/user/:username/posts', async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+router.get('/user/:username', async (req, res) => {
+  try {
+    const { username } = req.params;
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const skip = (page - 1) * limit;
+
+    // 1. Find user
+    const user = await User.findOne({ username }).select('_id username karma createdAt bio');
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // 2. Find posts
+    const [posts, total] = await Promise.all([
+      Post.find({ author: user._id })
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .populate('author', 'username karma'),
+      Post.countDocuments({ author: user._id })
+    ]);
+
+    res.json({
+      user,
+      posts,
+      page,
+      totalPages: Math.ceil(total / limit),
+      totalPosts: total
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
