@@ -3,100 +3,13 @@ const router = express.Router();
 const Community = require('../models/Community');
 const auth = require('../middleware/auth');
 const Post = require('../models/Post');
-
-// Create community
-router.post('/', auth, async (req, res) => {
-  try {
-    const { name, displayName, description, isPublic, isNSFW } = req.body;
-    
-    // Validate community name
-    const nameRegex = /^[a-z0-9_]+$/;
-    if (!nameRegex.test(name)) {
-      return res.status(400).json({ 
-        error: 'Community name can only contain lowercase letters, numbers, and underscores' 
-      });
-    }
-    
-    // Check if community exists
-    const existingCommunity = await Community.findOne({ name });
-    if (existingCommunity) {
-      return res.status(400).json({ error: 'Community name already exists' });
-    }
-    
-    // Create community
-    const community = new Community({
-      name,
-      displayName,
-      description,
-      createdBy: req.user.id,  // Fixed: changed from 'owner'
-      moderators: [req.user.id],
-      members: [req.user.id],
-      isPublic: isPublic !== false,
-      isNSFW: isNSFW || false
-    });
-    
-    await community.save();
-    
-    res.status(201).json({ community });
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
-
-// Join community
-router.post('/:name/join', auth, async (req, res) => {
-  try {
-    const community = await Community.findOne({ name: req.params.name });
-    
-    if (!community) {
-      return res.status(404).json({ error: 'Community not found' });
-    }
-    
-    if (community.members.includes(req.user.id)) {
-      return res.status(400).json({ error: 'Already a member' });
-    }
-    
-    community.members.push(req.user.id);
-    community.memberCount += 1;
-    await community.save();
-    
-    res.json({ community });
-  } catch (error) {
-    res.status(500).json({ error: 'Server error' });
-  }
-});
-
-// Leave community
-router.post('/:name/leave', auth, async (req, res) => {
-  try {
-    const community = await Community.findOne({ name: req.params.name });
-    
-    if (!community) {
-      return res.status(404).json({ error: 'Community not found' });
-    }
-    
-    if (community.createdBy.toString() === req.user.id) {  // Fixed: changed from 'owner'
-      return res.status(400).json({ error: 'Owner cannot leave community' });
-    }
-    
-    community.members = community.members.filter(
-      member => member.toString() !== req.user.id
-    );
-    community.memberCount -= 1;
-    await community.save();
-    
-    res.json({ community });
-  } catch (error) {
-    res.status(500).json({ error: 'Server error' });
-  }
-});
+const mongoose = require('mongoose');
 
 // GET /api/communities - Get all communities
 router.get('/', async (req, res) => {
   try {
     const communities = await Community.find()
-      .select('name displayName description memberCount createdAt')
+      .select('name displayName description memberCount createdAt isPublic isNSFW bannerColor')
       .sort({ createdAt: -1 });
     
     res.json({
@@ -112,33 +25,42 @@ router.get('/', async (req, res) => {
   }
 });
 
-// GET /api/communities/popular - Get popular communities sorted by member count
-router.get('/popular', async (req, res) => {
+// Check if community exists (FIXED)
+router.get('/check/:name', async (req, res) => {
   try {
-    // Get communities with most members
-    const popularCommunities = await Community.find()
-      .select('name displayName description memberCount createdAt')
-      .sort({ memberCount: -1 })
-      .limit(10); // Limit to top 10
+    const community = await Community.findOne({ name: req.params.name });
     
+    // Return available = true if community doesn't exist (name is free)
+    if (!community) {
+      return res.json({
+        success: true,
+        available: true,
+        message: 'Name is available'
+      });
+    }
+    
+    // If community exists, name is not available
     res.json({
       success: true,
-      communities: popularCommunities
+      available: false,
+      message: 'Community name already exists'
     });
   } catch (error) {
-    console.error('Error fetching popular communities:', error);
+    console.error('Error checking community:', error);
     res.status(500).json({
       success: false,
-      error: 'Failed to fetch popular communities'
+      error: 'Failed to check community'
     });
   }
 });
 
-// GET /api/communities/:name - Get specific community
+// GET /api/communities/:name - Get specific community with populated data
 router.get('/:name', async (req, res) => {
   try {
     const community = await Community.findOne({ name: req.params.name })
-      .select('name displayName description memberCount rules createdAt');
+      .populate('createdBy', 'username')
+      .populate('moderators', 'username')
+      .lean();
     
     if (!community) {
       return res.status(404).json({
@@ -146,6 +68,9 @@ router.get('/:name', async (req, res) => {
         error: 'Community not found'
       });
     }
+    
+    // Format dates
+    community.createdAtFormatted = new Date(community.createdAt).toLocaleDateString();
     
     res.json({
       success: true,
@@ -160,34 +85,108 @@ router.get('/:name', async (req, res) => {
   }
 });
 
-// Check if community exists
-router.get('/check/:name', async (req, res) => {
+// Join community - FIXED with proper response
+router.post('/:name/join', auth, async (req, res) => {
   try {
     const community = await Community.findOne({ name: req.params.name });
     
     if (!community) {
-      return res.status(404).json({
+      return res.status(404).json({ 
         success: false,
-        exists: false,
-        error: 'Community not found'
+        error: 'Community not found' 
       });
     }
     
-    res.json({
+    // Check if already a member
+    const isMember = community.members.some(
+      member => member.toString() === req.user._id.toString()
+    );
+    
+    if (isMember) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Already a member' 
+      });
+    }
+    
+    // Add user to members
+    community.members.push(req.user._id);
+    community.memberCount = community.members.length;
+    await community.save();
+    
+    // Populate before sending response
+    const populatedCommunity = await Community.findById(community._id)
+      .populate('createdBy', 'username')
+      .populate('moderators', 'username');
+    
+    res.json({ 
       success: true,
-      exists: true,
-      community: {
-        name: community.name,
-        displayName: community.displayName,
-        description: community.description,
-        memberCount: community.memberCount
-      }
+      message: 'Successfully joined community',
+      community: populatedCommunity 
     });
   } catch (error) {
-    console.error('Error checking community:', error);
-    res.status(500).json({
+    console.error('Error joining community:', error);
+    res.status(500).json({ 
       success: false,
-      error: 'Failed to check community'
+      error: 'Server error' 
+    });
+  }
+});
+
+// Leave community - FIXED with proper response
+router.post('/:name/leave', auth, async (req, res) => {
+  try {
+    const community = await Community.findOne({ name: req.params.name });
+    
+    if (!community) {
+      return res.status(404).json({ 
+        success: false,
+        error: 'Community not found' 
+      });
+    }
+    
+    // Check if user is the creator
+    if (community.createdBy.toString() === req.user._id.toString()) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Creator cannot leave community. Transfer ownership first.' 
+      });
+    }
+    
+    // Check if user is a member
+    const isMember = community.members.some(
+      member => member.toString() === req.user._id.toString()
+    );
+    
+    if (!isMember) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Not a member of this community' 
+      });
+    }
+    
+    // Remove user from members
+    community.members = community.members.filter(
+      member => member.toString() !== req.user._id.toString()
+    );
+    community.memberCount = community.members.length;
+    await community.save();
+    
+    // Populate before sending response
+    const populatedCommunity = await Community.findById(community._id)
+      .populate('createdBy', 'username')
+      .populate('moderators', 'username');
+    
+    res.json({ 
+      success: true,
+      message: 'Successfully left community',
+      community: populatedCommunity 
+    });
+  } catch (error) {
+    console.error('Error leaving community:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Server error' 
     });
   }
 });
