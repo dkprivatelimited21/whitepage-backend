@@ -4,8 +4,31 @@ const auth = require('../middleware/auth');
 const Post = require('../models/Post');
 const Comment = require('../models/Comment');
 const Notification = require('../models/Notification');
-const User = require('../models/User');  // Fixed: Changed from import to require
+const User = require('../models/User');
+const mongoose = require('mongoose'); // Added for ObjectId validation
 
+// ====================
+// STATIC ROUTES (MUST BE BEFORE /:id)
+// ====================
+
+// GET /api/posts/count - Get total post count
+router.get('/count', async (req, res) => {
+  try {
+    const count = await Post.countDocuments();
+    res.json({ 
+      success: true, 
+      count 
+    });
+  } catch (error) {
+    console.error('Error getting post count:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Failed to get post count' 
+    });
+  }
+});
+
+// GET /api/posts - Get posts with pagination
 router.get('/', async (req, res, next) => {
   try {
     const { subreddit, sort = 'new', page = 1, limit = 10 } = req.query;
@@ -39,22 +62,19 @@ router.get('/', async (req, res, next) => {
 
     const total = await Post.countDocuments(query);
 
-    // Make sure headers aren't already sent
-    if (!res.headersSent) {
-      return res.json({ 
-        posts: normalizedPosts,
-        page: pageNum,
-        totalPages: Math.ceil(total / limitNum),
-        totalPosts: total
-      });
-    }
+    res.json({ 
+      posts: normalizedPosts,
+      page: pageNum,
+      totalPages: Math.ceil(total / limitNum),
+      totalPosts: total
+    });
     
   } catch (error) {
     console.error(error);
-    // Only send error response if headers not sent
-    if (!res.headersSent) {
-      return res.status(500).json({ message: 'Server error' });
-    }
+    res.status(500).json({ 
+      success: false,
+      message: 'Server error' 
+    });
   }
 });
 
@@ -67,14 +87,19 @@ router.get('/subreddits', async (req, res) => {
       { $limit: 20 }
     ]);
 
-    res.json({ subreddits });
+    res.json({ 
+      success: true,
+      subreddits 
+    });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ 
+      success: false,
+      error: error.message 
+    });
   }
 });
 
 // GET /api/posts/trending - Get trending posts
-// MUST BE BEFORE THE /:id ROUTE!
 router.get('/trending', async (req, res) => {
   try {
     // Get posts from the last 48 hours for trending
@@ -85,7 +110,7 @@ router.get('/trending', async (req, res) => {
     })
     .populate('author', 'username')
     .sort({ createdAt: -1 })
-    .limit(20); // Get recent posts first
+    .limit(20);
     
     // Calculate trending score for each post
     const postsWithScore = posts.map(post => {
@@ -150,6 +175,88 @@ router.get('/trending/simple', async (req, res) => {
   }
 });
 
+// Get user's posts
+router.get('/user/:username/posts', async (req, res) => {
+  try {
+    const { username } = req.params;
+    const { page = 1, limit = 10 } = req.query;
+
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const skip = (pageNum - 1) * limitNum;
+
+    const posts = await Post.find({ authorName: username })
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limitNum)
+      .populate('author', 'username');
+
+    const total = await Post.countDocuments({ authorName: username });
+
+    res.json({
+      success: true,
+      posts,
+      page: pageNum,
+      totalPages: Math.ceil(total / limitNum),
+      totalPosts: total
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      success: false, 
+      error: error.message 
+    });
+  }
+});
+
+// Get user profile with posts
+router.get('/user/:username', async (req, res) => {
+  try {
+    const { username } = req.params;
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const skip = (page - 1) * limit;
+
+    // 1. Find user
+    const user = await User.findOne({ username }).select('_id username karma createdAt bio');
+    if (!user) {
+      return res.status(404).json({ 
+        success: false,
+        message: 'User not found' 
+      });
+    }
+
+    // 2. Find posts
+    const [posts, total] = await Promise.all([
+      Post.find({ author: user._id })
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .populate('author', 'username karma'),
+      Post.countDocuments({ author: user._id })
+    ]);
+
+    res.json({
+      success: true,
+      user,
+      posts,
+      page,
+      totalPages: Math.ceil(total / limit),
+      totalPosts: total
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ 
+      success: false,
+      message: 'Server error' 
+    });
+  }
+});
+
+// ====================
+// DYNAMIC ROUTES (/:id) - MUST BE AFTER ALL STATIC ROUTES
+// ====================
+
 // Create post
 router.post('/', auth, async (req, res) => {
   try {
@@ -164,25 +271,58 @@ router.post('/', auth, async (req, res) => {
     });
 
     await post.save();
-    res.status(201).json({ post });
+    res.status(201).json({ 
+      success: true,
+      post 
+    });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ 
+      success: false,
+      error: error.message 
+    });
   }
 });
 
 // Get single post - THIS MUST BE AFTER ALL OTHER SPECIFIC ROUTES!
 router.get('/:id', async (req, res) => {
   try {
-    const post = await Post.findById(req.params.id)
+    const { id } = req.params;
+    
+    // Check for special routes that might have slipped through
+    if (id === 'count' || id === 'trending' || id === 'subreddits' || id === 'user') {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Invalid post ID' 
+      });
+    }
+    
+    // Validate ObjectId
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Invalid post ID format' 
+      });
+    }
+
+    const post = await Post.findById(id)
       .populate('author', 'username karma');
 
     if (!post) {
-      return res.status(404).json({ error: 'Post not found' });
+      return res.status(404).json({ 
+        success: false,
+        error: 'Post not found' 
+      });
     }
 
-    res.json({ post });
+    res.json({ 
+      success: true,
+      post 
+    });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ 
+      success: false,
+      error: error.message 
+    });
   }
 });
 
@@ -193,13 +333,19 @@ router.post('/:id/comments', auth, async (req, res) => {
     const postId = req.params.id;
 
     if (!content || !content.trim()) {
-      return res.status(400).json({ error: 'Comment content is required' });
+      return res.status(400).json({ 
+        success: false,
+        error: 'Comment content is required' 
+      });
     }
 
     // Verify post exists
     const post = await Post.findById(postId);
     if (!post) {
-      return res.status(404).json({ error: 'Post not found' });
+      return res.status(404).json({ 
+        success: false,
+        error: 'Post not found' 
+      });
     }
 
     // Create comment
@@ -234,79 +380,19 @@ router.post('/:id/comments', auth, async (req, res) => {
   }
 });
 
-
-// Delete post
-router.delete('/:id', auth, async (req, res) => {
-  try {
-    const post = await Post.findById(req.params.id);
-
-    if (!post) {
-      return res.status(404).json({ error: 'Post not found' });
-    }
-
-    // Check if user is the author
-    if (post.author.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ error: 'Not authorized to delete this post' });
-    }
-
-    await Post.findByIdAndDelete(req.params.id);
-    res.json({ message: 'Post deleted successfully' });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Delete comment (and its replies)
-router.delete('/:postId/comments/:commentId', auth, async (req, res) => {
-  try {
-    const { postId, commentId } = req.params;
-
-    const comment = await Comment.findById(commentId);
-    if (!comment) {
-      return res.status(404).json({ error: 'Comment not found' });
-    }
-
-    // Author-only delete
-    if (comment.author.toString() !== req.user._id.toString()) {
-      return res.status(403).json({ error: 'Not authorized to delete this comment' });
-    }
-
-    // Count how many comments will be removed (comment + replies)
-    const repliesCount = await Comment.countDocuments({ parentComment: commentId });
-
-    // Delete main comment
-    await Comment.findByIdAndDelete(commentId);
-
-    // Delete all direct replies
-    await Comment.deleteMany({ parentComment: commentId });
-
-    // Update post comment count correctly
-    const post = await Post.findById(postId);
-    if (post) {
-      post.commentCount = Math.max(
-        0,
-        (post.commentCount || 0) - (1 + repliesCount)
-      );
-      await post.save();
-    }
-
-    res.json({
-      success: true,
-      message: 'Comment deleted successfully'
-    });
-  } catch (error) {
-    console.error('Error deleting comment:', error);
-    res.status(500).json({
-      success: false,
-      error: 'Failed to delete comment'
-    });
-  }
-});
-
 // Get comments for a post (top-level + replies)
 router.get('/:id/comments', async (req, res) => {
   try {
+    const { id } = req.params;
     const { sort = 'best', limit = 100 } = req.query;
+
+    // Validate post ID
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Invalid post ID' 
+      });
+    }
 
     let sortOption;
     switch (sort) {
@@ -326,7 +412,7 @@ router.get('/:id/comments', async (req, res) => {
 
     // Fetch top-level comments ONLY
     const comments = await Comment.find({
-      post: req.params.id,
+      post: id,
       parentComment: null
     })
       .sort(sortOption)
@@ -369,17 +455,27 @@ router.get('/:id/comments', async (req, res) => {
   }
 });
 
-
 // Add nested comment
 router.post('/:postId/comments/:commentId/reply', auth, async (req, res) => {
   try {
     const { content } = req.body;
     const { postId, commentId } = req.params;
 
+    // Validate IDs
+    if (!mongoose.Types.ObjectId.isValid(postId) || !mongoose.Types.ObjectId.isValid(commentId)) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Invalid ID format' 
+      });
+    }
+
     // Find parent comment
     const parentComment = await Comment.findById(commentId);
     if (!parentComment) {
-      return res.status(404).json({ error: 'Comment not found' });
+      return res.status(404).json({ 
+        success: false,
+        error: 'Comment not found' 
+      });
     }
 
     // Create reply
@@ -389,12 +485,15 @@ router.post('/:postId/comments/:commentId/reply', auth, async (req, res) => {
       authorName: req.user.username,
       post: postId,
       parentComment: commentId,
-      depth: parentComment.depth + 1
+      depth: (parentComment.depth || 0) + 1
     });
 
     await reply.save();
 
     // Add reply to parent's replies array
+    if (!parentComment.replies) {
+      parentComment.replies = [];
+    }
     parentComment.replies.push(reply._id);
     await parentComment.save();
 
@@ -412,9 +511,121 @@ router.post('/:postId/comments/:commentId/reply', auth, async (req, res) => {
       });
     }
 
-    res.status(201).json({ success: true, comment: reply });
+    res.status(201).json({ 
+      success: true, 
+      comment: reply 
+    });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error('Error creating reply:', error);
+    res.status(500).json({ 
+      success: false,
+      error: error.message 
+    });
+  }
+});
+
+// Delete post
+router.delete('/:id', auth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    // Validate ObjectId
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Invalid post ID' 
+      });
+    }
+
+    const post = await Post.findById(id);
+
+    if (!post) {
+      return res.status(404).json({ 
+        success: false,
+        error: 'Post not found' 
+      });
+    }
+
+    // Check if user is the author
+    if (post.author.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ 
+        success: false,
+        error: 'Not authorized to delete this post' 
+      });
+    }
+
+    await Post.findByIdAndDelete(id);
+    res.json({ 
+      success: true,
+      message: 'Post deleted successfully' 
+    });
+  } catch (error) {
+    console.error('Error deleting post:', error);
+    res.status(500).json({ 
+      success: false,
+      error: error.message 
+    });
+  }
+});
+
+// Delete comment (and its replies)
+router.delete('/:postId/comments/:commentId', auth, async (req, res) => {
+  try {
+    const { postId, commentId } = req.params;
+
+    // Validate IDs
+    if (!mongoose.Types.ObjectId.isValid(postId) || !mongoose.Types.ObjectId.isValid(commentId)) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Invalid ID format' 
+      });
+    }
+
+    const comment = await Comment.findById(commentId);
+    if (!comment) {
+      return res.status(404).json({ 
+        success: false,
+        error: 'Comment not found' 
+      });
+    }
+
+    // Author-only delete
+    if (comment.author.toString() !== req.user._id.toString()) {
+      return res.status(403).json({ 
+        success: false,
+        error: 'Not authorized to delete this comment' 
+      });
+    }
+
+    // Count how many comments will be removed (comment + replies)
+    const repliesCount = await Comment.countDocuments({ parentComment: commentId });
+
+    // Delete main comment
+    await Comment.findByIdAndDelete(commentId);
+
+    // Delete all direct replies
+    await Comment.deleteMany({ parentComment: commentId });
+
+    // Update post comment count correctly
+    const post = await Post.findById(postId);
+    if (post) {
+      post.commentCount = Math.max(
+        0,
+        (post.commentCount || 0) - (1 + repliesCount)
+      );
+      await post.save();
+    }
+
+    res.json({
+      success: true,
+      message: 'Comment deleted successfully'
+    });
+  } catch (error) {
+    console.error('Error deleting comment:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to delete comment'
+    });
   }
 });
 
@@ -424,9 +635,20 @@ router.post('/comments/:commentId/vote', auth, async (req, res) => {
     const { type } = req.body; // 'upvote' or 'downvote'
     const { commentId } = req.params;
 
+    // Validate commentId
+    if (!mongoose.Types.ObjectId.isValid(commentId)) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Invalid comment ID' 
+      });
+    }
+
     const comment = await Comment.findById(commentId);
     if (!comment) {
-      return res.status(404).json({ error: 'Comment not found' });
+      return res.status(404).json({ 
+        success: false,
+        error: 'Comment not found' 
+      });
     }
 
     // Remove existing votes
@@ -456,6 +678,11 @@ router.post('/comments/:commentId/vote', auth, async (req, res) => {
       }
     } else if (type === 'downvote') {
       comment.downvotes.push(req.user._id);
+    } else {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Invalid vote type' 
+      });
     }
 
     await comment.save();
@@ -464,78 +691,14 @@ router.post('/comments/:commentId/vote', auth, async (req, res) => {
       success: true, 
       upvotes: comment.upvotes.length,
       downvotes: comment.downvotes.length,
-      voteCount: comment.voteCount
+      voteCount: comment.upvotes.length - comment.downvotes.length
     });
   } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Get user's posts
-router.get('/user/:username/posts', async (req, res) => {
-  try {
-    const { username } = req.params;
-    const { page = 1, limit = 10 } = req.query;
-
-    const pageNum = parseInt(page);
-    const limitNum = parseInt(limit);
-    const skip = (pageNum - 1) * limitNum;
-
-    const posts = await Post.find({ authorName: username })
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limitNum)
-      .populate('author', 'username');
-
-    const total = await Post.countDocuments({ authorName: username });
-
-    res.json({
-      success: true,
-      posts,
-      page: pageNum,
-      totalPages: Math.ceil(total / limitNum),
-      totalPosts: total
+    console.error('Error voting on comment:', error);
+    res.status(500).json({ 
+      success: false,
+      error: error.message 
     });
-  } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
-
-// Get user profile with posts
-router.get('/user/:username', async (req, res) => {
-  try {
-    const { username } = req.params;
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 10;
-    const skip = (page - 1) * limit;
-
-    // 1. Find user
-    const user = await User.findOne({ username }).select('_id username karma createdAt bio');
-    if (!user) {
-      return res.status(404).json({ message: 'User not found' });
-    }
-
-    // 2. Find posts
-    const [posts, total] = await Promise.all([
-      Post.find({ author: user._id })
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit)
-        .populate('author', 'username karma'),
-      Post.countDocuments({ author: user._id })
-    ]);
-
-    res.json({
-      user,
-      posts,
-      page,
-      totalPages: Math.ceil(total / limit),
-      totalPosts: total
-    });
-
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: 'Server error' });
   }
 });
 
