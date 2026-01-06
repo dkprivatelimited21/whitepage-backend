@@ -9,7 +9,7 @@ const notificationSchema = new mongoose.Schema({
   },
   type: {
     type: String,
-    enum: ['comment_reply', 'post_reply', 'upvote', 'mention', 'new_follower'],
+    enum: ['comment_reply', 'post_reply', 'upvote', 'downvote', 'mention', 'new_follower'],
     required: true
   },
   sender: {
@@ -36,6 +36,14 @@ const notificationSchema = new mongoose.Schema({
   },
   link: {
     type: String
+  },
+  // Add these for better context
+  postTitle: {
+    type: String
+  },
+  commentContent: {
+    type: String,
+    maxlength: 200
   }
 }, {
   timestamps: true
@@ -43,5 +51,14 @@ const notificationSchema = new mongoose.Schema({
 
 // Index for performance
 notificationSchema.index({ user: 1, isRead: 1, createdAt: -1 });
+
+// Add compound index for preventing duplicate notifications
+notificationSchema.index({ 
+  user: 1, 
+  type: 1, 
+  sender: 1, 
+  post: 1, 
+  comment: 1 
+}, { unique: true });
 
 module.exports = mongoose.model('Notification', notificationSchema);
