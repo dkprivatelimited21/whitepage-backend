@@ -135,14 +135,6 @@ app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
 
 // 3. Rate limiting with Redis store
-const redisClient = new Redis(process.env.REDIS_URL, {
-  retryStrategy: (times) => {
-    const delay = Math.min(times * 50, 2000);
-    return delay;
-  },
-  maxRetriesPerRequest: 3,
-  enableReadyCheck: true
-});
 
 const redisClient = new Redis({
   host: process.env.REDIS_HOST || 'localhost',
