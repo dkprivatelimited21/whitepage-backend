@@ -5,7 +5,7 @@ const Community = require('../models/Community');
 const auth = require('../middleware/auth');
 const mongoose = require('mongoose');
 
-// ========== STATIC ROUTES (MUST BE BEFORE PARAMETERIZED ROUTES) ==========
+// ========== STATIC ROUTES ==========
 
 // GET /api/communities - Get all communities
 router.get('/', async (req, res) => {
@@ -13,11 +13,12 @@ router.get('/', async (req, res) => {
     console.log('📢 GET /api/communities route hit');
     const communities = await Community.find()
       .select('name displayName description memberCount createdAt isPublic isNSFW bannerColor')
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .limit(50);
     
     res.json({
       success: true,
-      communities: communities
+      communities: communities || []
     });
   } catch (error) {
     console.error('Error fetching communities:', error);
@@ -33,7 +34,6 @@ router.get('/popular', async (req, res) => {
   try {
     console.log('📢 GET /api/communities/popular route hit');
     
-    // Get communities with most members
     const popularCommunities = await Community.find()
       .select('name displayName description memberCount createdAt bannerColor')
       .sort({ memberCount: -1 })
@@ -58,7 +58,6 @@ router.get('/check/:name', async (req, res) => {
     console.log(`📢 GET /api/communities/check/${req.params.name} route hit`);
     const community = await Community.findOne({ name: req.params.name });
     
-    // Return available = true if community doesn't exist (name is free)
     if (!community) {
       return res.json({
         success: true,
@@ -67,7 +66,6 @@ router.get('/check/:name', async (req, res) => {
       });
     }
     
-    // If community exists, name is not available
     res.json({
       success: true,
       available: false,
@@ -82,7 +80,7 @@ router.get('/check/:name', async (req, res) => {
   }
 });
 
-// ========== PARAMETERIZED ROUTES (MUST BE AFTER STATIC ROUTES) ==========
+// ========== PARAMETERIZED ROUTES ==========
 
 // GET /api/communities/:name - Get specific community
 router.get('/:name', async (req, res) => {
@@ -90,7 +88,6 @@ router.get('/:name', async (req, res) => {
     console.log(`📢 GET /api/communities/${req.params.name} route hit`);
     const community = await Community.findOne({ name: req.params.name })
       .populate('createdBy', 'username')
-      .populate('moderators', 'username')
       .lean();
     
     if (!community) {
@@ -100,12 +97,28 @@ router.get('/:name', async (req, res) => {
       });
     }
     
-    // Format dates
-    community.createdAtFormatted = new Date(community.createdAt).toLocaleDateString();
+    // Check if user is member (if authenticated)
+    const token = req.headers.authorization;
+    let isMember = false;
+    
+    if (token && token.startsWith('Bearer ')) {
+      const jwt = require('jsonwebtoken');
+      try {
+        const decoded = jwt.verify(token.split(' ')[1], process.env.JWT_SECRET);
+        if (community.members && community.members.includes(decoded.userId)) {
+          isMember = true;
+        }
+      } catch (error) {
+        console.log('Token verification failed:', error.message);
+      }
+    }
     
     res.json({
       success: true,
-      community: community
+      community: {
+        ...community,
+        isMember: isMember
+      }
     });
   } catch (error) {
     console.error('Error fetching community:', error);
@@ -116,13 +129,13 @@ router.get('/:name', async (req, res) => {
   }
 });
 
-// Create community
+// POST /api/communities - Create community
 router.post('/', auth, async (req, res) => {
   try {
     console.log('📢 POST /api/communities route hit');
     const { name, displayName, description, isPublic, isNSFW } = req.body;
     
-    // Validate community name
+    // Validate name
     const nameRegex = /^[a-z0-9_]+$/;
     if (!nameRegex.test(name)) {
       return res.status(400).json({ 
@@ -131,9 +144,9 @@ router.post('/', auth, async (req, res) => {
       });
     }
     
-    // Check if community exists
-    const existingCommunity = await Community.findOne({ name });
-    if (existingCommunity) {
+    // Check if exists
+    const existing = await Community.findOne({ name });
+    if (existing) {
       return res.status(400).json({ 
         success: false,
         error: 'Community name already exists' 
@@ -143,8 +156,8 @@ router.post('/', auth, async (req, res) => {
     // Create community
     const community = new Community({
       name,
-      displayName,
-      description,
+      displayName: displayName || name,
+      description: description || '',
       createdBy: req.user._id,
       moderators: [req.user._id],
       members: [req.user._id],
@@ -155,9 +168,14 @@ router.post('/', auth, async (req, res) => {
     
     await community.save();
     
+    // Populate creator info
+    const populated = await Community.findById(community._id)
+      .populate('createdBy', 'username')
+      .lean();
+    
     res.status(201).json({ 
       success: true,
-      community 
+      community: populated
     });
   } catch (error) {
     console.error('Error creating community:', error);
@@ -168,7 +186,7 @@ router.post('/', auth, async (req, res) => {
   }
 });
 
-// Join community
+// POST /api/communities/:name/join - Join community
 router.post('/:name/join', auth, async (req, res) => {
   try {
     console.log(`📢 POST /api/communities/${req.params.name}/join route hit`);
@@ -181,7 +199,7 @@ router.post('/:name/join', auth, async (req, res) => {
       });
     }
     
-    // Check if already a member
+    // Check if already member
     const isMember = community.members.some(
       member => member.toString() === req.user._id.toString()
     );
@@ -193,15 +211,20 @@ router.post('/:name/join', auth, async (req, res) => {
       });
     }
     
-    // Add user to members
+    // Add to members
     community.members.push(req.user._id);
     community.memberCount = community.members.length;
     await community.save();
     
+    // Get updated community
+    const updated = await Community.findOne({ name: req.params.name })
+      .populate('createdBy', 'username')
+      .lean();
+    
     res.json({ 
       success: true,
       message: 'Successfully joined community',
-      community 
+      community: updated
     });
   } catch (error) {
     console.error('Error joining community:', error);
@@ -212,7 +235,7 @@ router.post('/:name/join', auth, async (req, res) => {
   }
 });
 
-// Leave community
+// POST /api/communities/:name/leave - Leave community
 router.post('/:name/leave', auth, async (req, res) => {
   try {
     console.log(`📢 POST /api/communities/${req.params.name}/leave route hit`);
@@ -225,15 +248,15 @@ router.post('/:name/leave', auth, async (req, res) => {
       });
     }
     
-    // Check if user is the creator
+    // Check if creator
     if (community.createdBy.toString() === req.user._id.toString()) {
       return res.status(400).json({ 
         success: false,
-        error: 'Creator cannot leave community. Transfer ownership first.' 
+        error: 'Creator cannot leave community' 
       });
     }
     
-    // Check if user is a member
+    // Check if member
     const isMember = community.members.some(
       member => member.toString() === req.user._id.toString()
     );
@@ -241,21 +264,26 @@ router.post('/:name/leave', auth, async (req, res) => {
     if (!isMember) {
       return res.status(400).json({ 
         success: false,
-        error: 'Not a member of this community' 
+        error: 'Not a member' 
       });
     }
     
-    // Remove user from members
+    // Remove from members
     community.members = community.members.filter(
       member => member.toString() !== req.user._id.toString()
     );
     community.memberCount = community.members.length;
     await community.save();
     
+    // Get updated community
+    const updated = await Community.findOne({ name: req.params.name })
+      .populate('createdBy', 'username')
+      .lean();
+    
     res.json({ 
       success: true,
       message: 'Successfully left community',
-      community 
+      community: updated
     });
   } catch (error) {
     console.error('Error leaving community:', error);
