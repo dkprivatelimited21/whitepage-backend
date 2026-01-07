@@ -1,13 +1,16 @@
+// routes/communities.js
 const express = require('express');
 const router = express.Router();
 const Community = require('../models/Community');
 const auth = require('../middleware/auth');
-const Post = require('../models/Post');
 const mongoose = require('mongoose');
+
+// ========== STATIC ROUTES (MUST BE BEFORE PARAMETERIZED ROUTES) ==========
 
 // GET /api/communities - Get all communities
 router.get('/', async (req, res) => {
   try {
+    console.log('📢 GET /api/communities route hit');
     const communities = await Community.find()
       .select('name displayName description memberCount createdAt isPublic isNSFW bannerColor')
       .sort({ createdAt: -1 });
@@ -25,9 +28,34 @@ router.get('/', async (req, res) => {
   }
 });
 
-// Check if community exists (FIXED)
+// GET /api/communities/popular - Get popular communities
+router.get('/popular', async (req, res) => {
+  try {
+    console.log('📢 GET /api/communities/popular route hit');
+    
+    // Get communities with most members
+    const popularCommunities = await Community.find()
+      .select('name displayName description memberCount createdAt bannerColor')
+      .sort({ memberCount: -1 })
+      .limit(10);
+    
+    res.json({
+      success: true,
+      communities: popularCommunities || []
+    });
+  } catch (error) {
+    console.error('Error fetching popular communities:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch popular communities'
+    });
+  }
+});
+
+// Check if community exists
 router.get('/check/:name', async (req, res) => {
   try {
+    console.log(`📢 GET /api/communities/check/${req.params.name} route hit`);
     const community = await Community.findOne({ name: req.params.name });
     
     // Return available = true if community doesn't exist (name is free)
@@ -54,9 +82,12 @@ router.get('/check/:name', async (req, res) => {
   }
 });
 
-// GET /api/communities/:name - Get specific community with populated data
+// ========== PARAMETERIZED ROUTES (MUST BE AFTER STATIC ROUTES) ==========
+
+// GET /api/communities/:name - Get specific community
 router.get('/:name', async (req, res) => {
   try {
+    console.log(`📢 GET /api/communities/${req.params.name} route hit`);
     const community = await Community.findOne({ name: req.params.name })
       .populate('createdBy', 'username')
       .populate('moderators', 'username')
@@ -85,9 +116,62 @@ router.get('/:name', async (req, res) => {
   }
 });
 
-// Join community - FIXED with proper response
+// Create community
+router.post('/', auth, async (req, res) => {
+  try {
+    console.log('📢 POST /api/communities route hit');
+    const { name, displayName, description, isPublic, isNSFW } = req.body;
+    
+    // Validate community name
+    const nameRegex = /^[a-z0-9_]+$/;
+    if (!nameRegex.test(name)) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Community name can only contain lowercase letters, numbers, and underscores' 
+      });
+    }
+    
+    // Check if community exists
+    const existingCommunity = await Community.findOne({ name });
+    if (existingCommunity) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Community name already exists' 
+      });
+    }
+    
+    // Create community
+    const community = new Community({
+      name,
+      displayName,
+      description,
+      createdBy: req.user._id,
+      moderators: [req.user._id],
+      members: [req.user._id],
+      memberCount: 1,
+      isPublic: isPublic !== false,
+      isNSFW: isNSFW || false
+    });
+    
+    await community.save();
+    
+    res.status(201).json({ 
+      success: true,
+      community 
+    });
+  } catch (error) {
+    console.error('Error creating community:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Server error' 
+    });
+  }
+});
+
+// Join community
 router.post('/:name/join', auth, async (req, res) => {
   try {
+    console.log(`📢 POST /api/communities/${req.params.name}/join route hit`);
     const community = await Community.findOne({ name: req.params.name });
     
     if (!community) {
@@ -114,15 +198,10 @@ router.post('/:name/join', auth, async (req, res) => {
     community.memberCount = community.members.length;
     await community.save();
     
-    // Populate before sending response
-    const populatedCommunity = await Community.findById(community._id)
-      .populate('createdBy', 'username')
-      .populate('moderators', 'username');
-    
     res.json({ 
       success: true,
       message: 'Successfully joined community',
-      community: populatedCommunity 
+      community 
     });
   } catch (error) {
     console.error('Error joining community:', error);
@@ -133,9 +212,10 @@ router.post('/:name/join', auth, async (req, res) => {
   }
 });
 
-// Leave community - FIXED with proper response
+// Leave community
 router.post('/:name/leave', auth, async (req, res) => {
   try {
+    console.log(`📢 POST /api/communities/${req.params.name}/leave route hit`);
     const community = await Community.findOne({ name: req.params.name });
     
     if (!community) {
@@ -172,15 +252,10 @@ router.post('/:name/leave', auth, async (req, res) => {
     community.memberCount = community.members.length;
     await community.save();
     
-    // Populate before sending response
-    const populatedCommunity = await Community.findById(community._id)
-      .populate('createdBy', 'username')
-      .populate('moderators', 'username');
-    
     res.json({ 
       success: true,
       message: 'Successfully left community',
-      community: populatedCommunity 
+      community 
     });
   } catch (error) {
     console.error('Error leaving community:', error);

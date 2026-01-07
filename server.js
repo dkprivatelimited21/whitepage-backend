@@ -21,9 +21,7 @@ if (!process.env.MONGODB_URI) {
 // Middleware
 app.use(cors({
   origin: [
-    'https://whitepage-one.vercel.app',
-    'http://localhost:5173',
-    'http://localhost:3000'
+    'https://whitepage-one.vercel.app'
   ],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],

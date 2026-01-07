@@ -6,20 +6,18 @@ const communitySchema = new mongoose.Schema({
     type: String,
     required: true,
     unique: true,
-    trim: true,
-    lowercase: true
+    lowercase: true,
+    trim: true
   },
   displayName: {
     type: String,
-    required: true
+    required: true,
+    trim: true
   },
   description: {
     type: String,
-    required: true
+    default: ''
   },
-  rules: [{
-    type: String
-  }],
   createdBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
@@ -35,42 +33,24 @@ const communitySchema = new mongoose.Schema({
   }],
   memberCount: {
     type: Number,
-    default: 1 // Starts with creator as member
-  },
-  postCount: {
-    type: Number,
-    default: 0
+    default: 1
   },
   isPublic: {
     type: Boolean,
     default: true
+  },
+  isNSFW: {
+    type: Boolean,
+    default: false
+  },
+  bannerColor: {
+    type: String,
+    default: '#FF4500'
+  },
+  createdAt: {
+    type: Date,
+    default: Date.now
   }
-}, {
-  timestamps: true,
-  toJSON: { virtuals: true },
-  toObject: { virtuals: true }
-});
-
-// REMOVE THIS VIRTUAL (it conflicts with the real memberCount field)
-// communitySchema.virtual('memberCount').get(function() {
-//   return this.members ? this.members.length : 0;
-// });
-
-// Instead, update the real memberCount field automatically
-communitySchema.pre('save', function(next) {
-  // Update memberCount based on members array length
-  this.memberCount = this.members ? this.members.length : 0;
-  next();
-});
-
-// Add a virtual for calculated member count if needed
-communitySchema.virtual('calculatedMemberCount').get(function() {
-  return this.members ? this.members.length : 0;
-});
-
-// Add a virtual for the community URL
-communitySchema.virtual('url').get(function() {
-  return `/r/${this.name}`;
 });
 
 module.exports = mongoose.model('Community', communitySchema);
