@@ -61,7 +61,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/posts', postRoutes);
 app.use('/api/votes', voteRoutes);
 app.use('/api/communities', communityRoutes);
-app.use('/api/notifications', notificationRoutes);
+app.use('/api/notifications', auth, notificationRoutes);
 app.use('/api/comments', commentRoutes);
 
 // Health check
