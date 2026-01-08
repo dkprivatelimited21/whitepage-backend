@@ -26,11 +26,29 @@ if (!process.env.JWT_SECRET) {
   process.exit(1);
 }
 
-// Basic security middleware
-app.use(cors({
+// 1️⃣ 处理OPTIONS请求 - 在所有路由之前
+app.options('*', cors());
+
+// 2️⃣ CORS配置（增强版）
+const corsOptions = {
   origin: process.env.CORS_ORIGIN?.split(',') || 'http://localhost:3000',
-  credentials: true
-}));
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  optionsSuccessStatus: 200 // 有些浏览器需要200而不是204
+};
+
+app.use(cors(corsOptions));
+
+// 3️⃣ 显式处理OPTIONS请求的中间件
+app.use((req, res, next) => {
+  if (req.method === 'OPTIONS') {
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    return res.status(200).end();
+  }
+  next();
+});
 
 app.use(express.json({ limit: '10kb' }));
 
