@@ -1,4 +1,4 @@
-// models/User.js - Simplified version
+// models/User.js - Remove email verification fields
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 
@@ -44,12 +44,36 @@ const userSchema = new mongoose.Schema({
   isActive: {
     type: Boolean,
     default: true
-  }
+  },
+  // REMOVED: email verification fields
+  // emailVerified: {
+  //   type: Boolean,
+  //   default: false
+  // },
+  // emailVerificationToken: String,
+  // emailVerificationExpires: Date,
+  // passwordResetToken: String,
+  // passwordResetExpires: Date
 }, {
   timestamps: true
 });
 
-// Remove email verification related methods
+// Remove email verification methods
+// userSchema.methods.generateEmailVerificationToken = function() {
+//   const token = crypto.randomBytes(32).toString('hex');
+//   this.emailVerificationToken = token;
+//   this.emailVerificationExpires = Date.now() + 24 * 60 * 60 * 1000; // 24 hours
+//   return token;
+// };
+
+// userSchema.methods.generatePasswordResetToken = function() {
+//   const token = crypto.randomBytes(32).toString('hex');
+//   this.passwordResetToken = token;
+//   this.passwordResetExpires = Date.now() + 60 * 60 * 1000; // 1 hour
+//   return token;
+// };
+
+// Keep only essential methods
 userSchema.methods.comparePassword = async function(password) {
   return await bcrypt.compare(password, this.password);
 };

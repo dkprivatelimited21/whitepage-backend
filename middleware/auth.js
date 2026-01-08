@@ -1,4 +1,4 @@
-// middleware/auth.js - Simplified authentication middleware
+// middleware/auth.js - REMOVED email verification check
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 
@@ -21,13 +21,13 @@ const auth = async (req, res, next) => {
       });
     }
 
-    // Check if email is verified
-    if (!user.emailVerified) {
-      return res.status(403).json({ 
-        error: 'Email not verified. Please verify your email before proceeding.',
-        code: 'EMAIL_NOT_VERIFIED'
-      });
-    }
+    // REMOVED: Email verification check
+    // if (!user.emailVerified) {
+    //   return res.status(403).json({ 
+    //     error: 'Email not verified. Please verify your email before proceeding.',
+    //     code: 'EMAIL_NOT_VERIFIED'
+    //   });
+    // }
 
     req.user = user;
     req.token = token;
