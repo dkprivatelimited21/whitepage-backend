@@ -1,4 +1,4 @@
-// routes/auth.js - Complete authentication routes
+// routes/auth.js - Updated with username or email login
 const express = require('express');
 const router = express.Router();
 const jwt = require('jsonwebtoken');
@@ -117,25 +117,35 @@ router.post('/register', registerLimiter, async (req, res) => {
 });
 
 /* ---------------------------------------------------
-   LOGIN
+   LOGIN (Updated: Login with email OR username)
 --------------------------------------------------- */
 router.post('/login', loginLimiter, async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { identifier, password } = req.body;
 
     // Validation
-    if (!email || !password) {
+    if (!identifier || !password) {
       return res.status(400).json({ 
-        error: 'Email and password are required' 
+        error: 'Username/Email and password are required' 
       });
     }
 
-    // Find user by email
-    const user = await User.findOne({ email });
+    // Determine if identifier is email or username
+    let query = {};
+    if (identifier.includes('@')) {
+      // It's an email
+      query = { email: identifier.toLowerCase().trim() };
+    } else {
+      // It's a username
+      query = { username: identifier.trim() };
+    }
+
+    // Find user by email or username
+    const user = await User.findOne(query);
     
     if (!user) {
       return res.status(401).json({ 
-        error: 'Invalid email or password' 
+        error: 'Invalid username/email or password' 
       });
     }
 
@@ -163,7 +173,7 @@ router.post('/login', loginLimiter, async (req, res) => {
       
       const attemptsLeft = 5 - user.loginAttempts;
       return res.status(401).json({ 
-        error: `Invalid email or password. ${attemptsLeft} attempts remaining.` 
+        error: `Invalid username/email or password. ${attemptsLeft} attempts remaining.` 
       });
     }
 
@@ -215,20 +225,28 @@ router.post('/logout', (req, res) => {
 --------------------------------------------------- */
 router.post('/forgot-password', resetLimiter, async (req, res) => {
   try {
-    const { email } = req.body;
+    const { identifier } = req.body;
 
-    if (!email) {
+    if (!identifier) {
       return res.status(400).json({ 
-        error: 'Email is required' 
+        error: 'Username or Email is required' 
       });
     }
 
-    const user = await User.findOne({ email });
+    // Determine if identifier is email or username
+    let query = {};
+    if (identifier.includes('@')) {
+      query = { email: identifier.toLowerCase().trim() };
+    } else {
+      query = { username: identifier.trim() };
+    }
+
+    const user = await User.findOne(query);
     
     if (!user) {
       // Don't reveal that user doesn't exist for security
       return res.json({ 
-        message: 'If an account exists with this email, a reset link will be sent.' 
+        message: 'If an account exists with this username/email, a reset link will be sent.' 
       });
     }
 
@@ -246,6 +264,7 @@ router.post('/forgot-password', resetLimiter, async (req, res) => {
     res.json({
       message: 'Password reset initiated.',
       resetToken: resetToken, // In production, remove this line and send email
+      note: `Reset token sent to ${user.email}`, // In production, don't show email
       success: true
     });
 
@@ -287,6 +306,8 @@ router.post('/reset-password/:token', resetLimiter, async (req, res) => {
     user.password = password;
     user.resetPasswordToken = undefined;
     user.resetPasswordExpires = undefined;
+    user.loginAttempts = 0; // Reset login attempts
+    user.lockUntil = undefined; // Unlock account if locked
     await user.save();
 
     res.json({
@@ -481,6 +502,94 @@ router.put('/profile', async (req, res) => {
     
     res.status(500).json({ 
       error: 'Profile update failed' 
+    });
+  }
+});
+
+/* ---------------------------------------------------
+   CHECK USERNAME AVAILABILITY
+--------------------------------------------------- */
+router.get('/check-username/:username', async (req, res) => {
+  try {
+    const { username } = req.params;
+    
+    if (!username || username.length < 3) {
+      return res.status(400).json({ 
+        error: 'Username must be at least 3 characters' 
+      });
+    }
+
+    // Check if username exists
+    const existingUser = await User.findOne({ username });
+    
+    if (existingUser) {
+      return res.json({ 
+        available: false,
+        message: 'Username already taken' 
+      });
+    }
+
+    // Check for suspicious usernames
+    if (await isSuspiciousUsername(username)) {
+      return res.json({ 
+        available: false,
+        message: 'Username not allowed' 
+      });
+    }
+
+    res.json({
+      available: true,
+      message: 'Username is available'
+    });
+
+  } catch (error) {
+    console.error('Username check error:', error);
+    res.status(500).json({ 
+      error: 'Failed to check username availability' 
+    });
+  }
+});
+
+/* ---------------------------------------------------
+   CHECK EMAIL AVAILABILITY
+--------------------------------------------------- */
+router.get('/check-email/:email', async (req, res) => {
+  try {
+    const { email } = req.params;
+    
+    if (!email || !email.includes('@')) {
+      return res.status(400).json({ 
+        error: 'Valid email is required' 
+      });
+    }
+
+    // Check if email exists
+    const existingUser = await User.findOne({ email: email.toLowerCase() });
+    
+    if (existingUser) {
+      return res.json({ 
+        available: false,
+        message: 'Email already registered' 
+      });
+    }
+
+    // Check for disposable email
+    if (await checkDisposableEmail(email)) {
+      return res.json({ 
+        available: false,
+        message: 'Disposable email addresses are not allowed' 
+      });
+    }
+
+    res.json({
+      available: true,
+      message: 'Email is available'
+    });
+
+  } catch (error) {
+    console.error('Email check error:', error);
+    res.status(500).json({ 
+      error: 'Failed to check email availability' 
     });
   }
 });
