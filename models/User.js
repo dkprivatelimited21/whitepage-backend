@@ -1,4 +1,4 @@
-// models/User.js - Remove email verification fields
+// models/User.js - Updated to match auth.js requirements
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 
@@ -45,35 +45,14 @@ const userSchema = new mongoose.Schema({
     type: Boolean,
     default: true
   },
-  // REMOVED: email verification fields
-  // emailVerified: {
-  //   type: Boolean,
-  //   default: false
-  // },
-  // emailVerificationToken: String,
-  // emailVerificationExpires: Date,
-  // passwordResetToken: String,
-  // passwordResetExpires: Date
+  // ADD these fields for password reset functionality
+  resetPasswordToken: String,
+  resetPasswordExpires: Date
 }, {
   timestamps: true
 });
 
-// Remove email verification methods
-// userSchema.methods.generateEmailVerificationToken = function() {
-//   const token = crypto.randomBytes(32).toString('hex');
-//   this.emailVerificationToken = token;
-//   this.emailVerificationExpires = Date.now() + 24 * 60 * 60 * 1000; // 24 hours
-//   return token;
-// };
-
-// userSchema.methods.generatePasswordResetToken = function() {
-//   const token = crypto.randomBytes(32).toString('hex');
-//   this.passwordResetToken = token;
-//   this.passwordResetExpires = Date.now() + 60 * 60 * 1000; // 1 hour
-//   return token;
-// };
-
-// Keep only essential methods
+// Essential methods
 userSchema.methods.comparePassword = async function(password) {
   return await bcrypt.compare(password, this.password);
 };
@@ -99,6 +78,7 @@ userSchema.methods.isLocked = function() {
   return this.lockUntil && this.lockUntil > Date.now();
 };
 
+// Hash password before saving
 userSchema.pre('save', async function(next) {
   if (!this.isModified('password')) return next();
   
