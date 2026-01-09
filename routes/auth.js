@@ -121,9 +121,16 @@ router.post('/register', registerLimiter, async (req, res) => {
 --------------------------------------------------- */
 router.post('/login', loginLimiter, async (req, res) => {
   try {
-    const { identifier, password } = req.body;
+    // Support both "identifier" and "username/email" for compatibility
+    let identifier = req.body.identifier;
+    
+    // If identifier is not provided, check for username or email
+    if (!identifier) {
+      identifier = req.body.username || req.body.email;
+    }
+    
+    const password = req.body.password;
 
-    // Validation
     if (!identifier || !password) {
       return res.status(400).json({ 
         error: 'Username/Email and password are required' 
