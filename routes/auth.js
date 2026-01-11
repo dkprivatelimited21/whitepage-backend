@@ -5,6 +5,9 @@ const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const rateLimit = require('express-rate-limit');
 const crypto = require('crypto');
+const authMiddleware = require('../middleware/auth');
+
+
 
 // Rate limiting for registration
 const registerLimiter = rateLimit({
