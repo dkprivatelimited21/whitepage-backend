@@ -557,6 +557,149 @@ router.get('/check-username/:username', async (req, res) => {
   }
 });
 
+
+
+// routes/auth.js - ADD THESE ROUTES FOR SOCIAL LOGIN
+
+/* ---------------------------------------------------
+   SOCIAL LOGIN INITIATION
+--------------------------------------------------- */
+router.get('/auth/google', (req, res) => {
+  // Redirect to Google OAuth
+  const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?${new URLSearchParams({
+    client_id: process.env.GOOGLE_CLIENT_ID,
+    redirect_uri: process.env.GOOGLE_CALLBACK_URL,
+    response_type: 'code',
+    scope: 'profile email',
+    access_type: 'offline',
+    prompt: 'consent'
+  })}`;
+  res.redirect(authUrl);
+});
+
+router.get('/auth/github', (req, res) => {
+  const authUrl = `https://github.com/login/oauth/authorize?${new URLSearchParams({
+    client_id: process.env.GITHUB_CLIENT_ID,
+    redirect_uri: process.env.GITHUB_CALLBACK_URL,
+    scope: 'user:email'
+  })}`;
+  res.redirect(authUrl);
+});
+
+router.get('/auth/facebook', (req, res) => {
+  const authUrl = `https://www.facebook.com/v17.0/dialog/oauth?${new URLSearchParams({
+    client_id: process.env.FACEBOOK_CLIENT_ID,
+    redirect_uri: process.env.FACEBOOK_CALLBACK_URL,
+    scope: 'email',
+    state: crypto.randomBytes(16).toString('hex')
+  })}`;
+  res.redirect(authUrl);
+});
+
+/* ---------------------------------------------------
+   SOCIAL LOGIN CALLBACKS
+--------------------------------------------------- */
+router.get('/auth/google/callback', async (req, res) => {
+  try {
+    const { code } = req.query;
+    
+    // Exchange code for tokens
+    const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        code,
+        client_id: process.env.GOOGLE_CLIENT_ID,
+        client_secret: process.env.GOOGLE_CLIENT_SECRET,
+        redirect_uri: process.env.GOOGLE_CALLBACK_URL,
+        grant_type: 'authorization_code'
+      })
+    });
+    
+    const tokens = await tokenResponse.json();
+    
+    // Get user info
+    const userResponse = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+      headers: { Authorization: `Bearer ${tokens.access_token}` }
+    });
+    
+    const userInfo = await userResponse.json();
+    
+    // Find or create user
+    let user = await User.findOne({ google_id: userInfo.id });
+    
+    if (!user) {
+      user = await User.findOne({ email: userInfo.email });
+      
+      if (user) {
+        // Link Google account to existing user
+        user.google_id = userInfo.id;
+        await user.save();
+      } else {
+        // Create new user
+        user = await User.create({
+          google_id: userInfo.id,
+          email: userInfo.email,
+          email_verified: userInfo.verified_email || false,
+          username: userInfo.name?.replace(/\s+/g, '_').toLowerCase() + '_' + Date.now().toString().slice(-6),
+          profile_picture: userInfo.picture
+        });
+      }
+    }
+    
+    // Generate JWT token
+    const token = jwt.sign(
+      { userId: user._id },
+      process.env.JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+    
+    // Redirect to frontend with token
+    res.redirect(`${process.env.FRONTEND_URL}/auth/callback?token=${token}&provider=google`);
+    
+  } catch (error) {
+    console.error('Google OAuth error:', error);
+    res.redirect(`${process.env.FRONTEND_URL}/login?error=social_auth_failed`);
+  }
+});
+
+/* ---------------------------------------------------
+   LINK/UNLINK SOCIAL ACCOUNTS
+--------------------------------------------------- */
+router.post('/auth/link/:provider', authMiddleware, async (req, res) => {
+  try {
+    const { provider } = req.params;
+    const { providerId } = req.body;
+    const userId = req.user._id;
+    
+    const update = { [`${provider}_id`]: providerId };
+    await User.findByIdAndUpdate(userId, update);
+    
+    res.json({ success: true, message: `${provider} account linked` });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to link account' });
+  }
+});
+
+router.post('/auth/unlink/:provider', authMiddleware, async (req, res) => {
+  try {
+    const { provider } = req.params;
+    const userId = req.user._id;
+    
+    const update = { [`${provider}_id`]: null };
+    await User.findByIdAndUpdate(userId, update);
+    
+    res.json({ success: true, message: `${provider} account unlinked` });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to unlink account' });
+  }
+});
+
+
+
+
+
+
 /* ---------------------------------------------------
    CHECK EMAIL AVAILABILITY
 --------------------------------------------------- */
