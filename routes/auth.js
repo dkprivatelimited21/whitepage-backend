@@ -567,7 +567,7 @@ router.get('/check-username/:username', async (req, res) => {
 /* ---------------------------------------------------
    SOCIAL LOGIN INITIATION
 --------------------------------------------------- */
-router.get('/auth/google', (req, res) => {
+router.get('/google', (req, res) => {
   // Redirect to Google OAuth
   const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?${new URLSearchParams({
     client_id: process.env.GOOGLE_CLIENT_ID,
@@ -580,7 +580,7 @@ router.get('/auth/google', (req, res) => {
   res.redirect(authUrl);
 });
 
-router.get('/auth/github', (req, res) => {
+router.get('/github', (req, res) => {
   const authUrl = `https://github.com/login/oauth/authorize?${new URLSearchParams({
     client_id: process.env.GITHUB_CLIENT_ID,
     redirect_uri: process.env.GITHUB_CALLBACK_URL,
@@ -589,7 +589,7 @@ router.get('/auth/github', (req, res) => {
   res.redirect(authUrl);
 });
 
-router.get('/auth/facebook', (req, res) => {
+router.get('/facebook', (req, res) => {
   const authUrl = `https://www.facebook.com/v17.0/dialog/oauth?${new URLSearchParams({
     client_id: process.env.FACEBOOK_CLIENT_ID,
     redirect_uri: process.env.FACEBOOK_CALLBACK_URL,
@@ -602,7 +602,7 @@ router.get('/auth/facebook', (req, res) => {
 /* ---------------------------------------------------
    SOCIAL LOGIN CALLBACKS
 --------------------------------------------------- */
-router.get('/auth/google/callback', async (req, res) => {
+router.get('/google/callback', async (req, res) => {
   try {
     const { code } = req.query;
     
@@ -669,7 +669,7 @@ router.get('/auth/google/callback', async (req, res) => {
 /* ---------------------------------------------------
    LINK/UNLINK SOCIAL ACCOUNTS
 --------------------------------------------------- */
-router.post('/auth/link/:provider', authMiddleware, async (req, res) => {
+router.post('/link/:provider', authMiddleware, async (req, res) => {
   try {
     const { provider } = req.params;
     const { providerId } = req.body;
@@ -684,7 +684,7 @@ router.post('/auth/link/:provider', authMiddleware, async (req, res) => {
   }
 });
 
-router.post('/auth/unlink/:provider', authMiddleware, async (req, res) => {
+router.post('/unlink/:provider', authMiddleware, async (req, res) => {
   try {
     const { provider } = req.params;
     const userId = req.user._id;
