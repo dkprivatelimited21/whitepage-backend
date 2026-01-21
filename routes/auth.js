@@ -576,8 +576,12 @@ router.get('/google', (req, res) => {
     scope: 'profile email',
     access_type: 'offline',
     prompt: 'consent'
-  })}`;
-  res.redirect(authUrl);
+  })}`;// Change this line in /google/callback route:
+res.redirect(`${process.env.FRONTEND_URL}/auth/callback?token=${token}&provider=google`);
+
+// Make sure FRONTEND_URL is set in your .env:
+// FRONTEND_URL=https://whitepage-one.vercel.app
+// or FRONTEND_URL=http://localhost:3000
 });
 
 // Add this route for /github
