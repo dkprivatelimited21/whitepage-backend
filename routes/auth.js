@@ -666,6 +666,179 @@ router.get('/google/callback', async (req, res) => {
   }
 });
 
+
+
+/* ---------------------------------------------------
+   GITHUB CALLBACK
+--------------------------------------------------- */
+router.get('/github/callback', async (req, res) => {
+  try {
+    const { code, error, state } = req.query;
+    
+    if (error) {
+      console.error('GitHub OAuth error:', error);
+      return res.redirect(`${process.env.FRONTEND_URL || 'http://localhost:3000'}/login?error=${error}`);
+    }
+    
+    if (!code) {
+      return res.status(400).json({ error: 'No authorization code received' });
+    }
+    
+    // Check if GitHub OAuth is configured
+    if (!process.env.GITHUB_CLIENT_ID || !process.env.GITHUB_CLIENT_SECRET) {
+      console.error('GitHub OAuth not configured');
+      return res.redirect(`${process.env.FRONTEND_URL || 'http://localhost:3000'}/login?error=github_not_configured`);
+    }
+    
+    console.log('GitHub OAuth callback received, exchanging code for token...');
+    
+    // Exchange code for access token
+    const tokenResponse = await fetch('https://github.com/login/oauth/access_token', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json'
+      },
+      body: JSON.stringify({
+        client_id: process.env.GITHUB_CLIENT_ID,
+        client_secret: process.env.GITHUB_CLIENT_SECRET,
+        code: code,
+        redirect_uri: `${process.env.API_URL || 'http://localhost:5000'}/auth/github/callback`
+      })
+    });
+    
+    const tokenData = await tokenResponse.json();
+    
+    if (!tokenData.access_token) {
+      console.error('No access token received from GitHub:', tokenData);
+      return res.redirect(`${process.env.FRONTEND_URL || 'http://localhost:3000'}/login?error=github_token_failed`);
+    }
+    
+    console.log('Access token received, fetching user info...');
+    
+    // Get user info from GitHub
+    const userResponse = await fetch('https://api.github.com/user', {
+      headers: {
+        'Authorization': `Bearer ${tokenData.access_token}`,
+        'User-Agent': 'Whitepage-App',
+        'Accept': 'application/json'
+      }
+    });
+    
+    const userInfo = await userResponse.json();
+    
+    if (!userInfo.id) {
+      console.error('Invalid user info from GitHub:', userInfo);
+      return res.redirect(`${process.env.FRONTEND_URL || 'http://localhost:3000'}/login?error=github_user_failed`);
+    }
+    
+    console.log('GitHub user info received:', userInfo.login);
+    
+    // Get user emails
+    const emailResponse = await fetch('https://api.github.com/user/emails', {
+      headers: {
+        'Authorization': `Bearer ${tokenData.access_token}`,
+        'User-Agent': 'Whitepage-App',
+        'Accept': 'application/json'
+      }
+    });
+    
+    const emails = await emailResponse.json();
+    const primaryEmail = emails.find(email => email.primary && email.verified)?.email || emails[0]?.email;
+    
+    // Find or create user in your database
+    let user = await User.findOne({ 
+      $or: [
+        { githubId: userInfo.id.toString() },
+        { email: primaryEmail }
+      ]
+    });
+    
+    if (!user) {
+      // Create new user
+      console.log('Creating new user for GitHub ID:', userInfo.id);
+      
+      // Generate a username from GitHub login
+      let username = userInfo.login;
+      let usernameExists = await User.findOne({ username });
+      let counter = 1;
+      
+      // Ensure unique username
+      while (usernameExists) {
+        username = `${userInfo.login}_${counter}`;
+        usernameExists = await User.findOne({ username });
+        counter++;
+      }
+      
+      user = new User({
+        githubId: userInfo.id.toString(),
+        email: primaryEmail || `${userInfo.login}@github.com`,
+        username: username,
+        profilePicture: userInfo.avatar_url,
+        emailVerified: !!primaryEmail,
+        password: crypto.randomBytes(16).toString('hex') // Random password for social login users
+      });
+      
+      await user.save();
+      console.log('New user created:', user.username);
+      
+    } else if (!user.githubId) {
+      // Link GitHub account to existing user
+      user.githubId = userInfo.id.toString();
+      await user.save();
+      console.log('GitHub account linked to existing user:', user.username);
+    }
+    
+    // Generate JWT token
+    const token = jwt.sign(
+      { userId: user._id },
+      process.env.JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+    
+    console.log('JWT token generated, redirecting to frontend...');
+    
+    // Redirect to frontend with token
+    res.redirect(`${process.env.FRONTEND_URL || 'http://localhost:3000'}/auth/callback?token=${token}&provider=github`);
+    
+  } catch (error) {
+    console.error('GitHub OAuth callback error:', error);
+    res.redirect(`${process.env.FRONTEND_URL || 'http://localhost:3000'}/login?error=social_auth_failed`);
+  }
+});
+
+/* ---------------------------------------------------
+   FACEBOOK CALLBACK
+--------------------------------------------------- */
+router.get('/facebook/callback', async (req, res) => {
+  try {
+    const { code, error } = req.query;
+    
+    if (error) {
+      console.error('Facebook OAuth error:', error);
+      return res.redirect(`${process.env.FRONTEND_URL || 'http://localhost:3000'}/login?error=${error}`);
+    }
+    
+    if (!code) {
+      return res.status(400).json({ error: 'No authorization code received' });
+    }
+    
+    // For now, return a simple response since Facebook OAuth needs more setup
+    console.log('Facebook OAuth callback received, code:', code);
+    
+    res.json({
+      message: 'Facebook OAuth callback received',
+      code: code,
+      note: 'Facebook OAuth needs client ID and secret configuration'
+    });
+    
+  } catch (error) {
+    console.error('Facebook OAuth error:', error);
+    res.status(500).json({ error: 'Facebook authentication failed' });
+  }
+});
+
+
 /* ---------------------------------------------------
    LINK/UNLINK SOCIAL ACCOUNTS
 --------------------------------------------------- */

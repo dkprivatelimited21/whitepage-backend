@@ -23,10 +23,15 @@ const userSchema = new mongoose.Schema({
     required: true,
     minlength: 6
   },
-  karma: {
-    type: Number,
-    default: 0
-  },
+
+  // Social login IDs
+  googleId: { type: String, unique: true, sparse: true },
+  githubId: { type: String, unique: true, sparse: true },
+  facebookId: { type: String, unique: true, sparse: true },
+  
+  // Profile picture URL
+  profilePicture: String,
+
   createdAt: {
     type: Date,
     default: Date.now
@@ -51,6 +56,8 @@ const userSchema = new mongoose.Schema({
 }, {
   timestamps: true
 });
+
+
 
 // Essential methods
 userSchema.methods.comparePassword = async function(password) {
