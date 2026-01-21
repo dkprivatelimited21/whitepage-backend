@@ -635,9 +635,6 @@ router.get('/facebook', (req, res) => {
    SOCIAL LOGIN CALLBACKS
 --------------------------------------------------- */
 /* ---------------------------------------------------
-   GOOGLE CALLBACK
---------------------------------------------------- */
-/* ---------------------------------------------------
    GOOGLE CALLBACK - FIXED VERSION
 --------------------------------------------------- */
 router.get('/google/callback', async (req, res) => {
@@ -655,7 +652,7 @@ router.get('/google/callback', async (req, res) => {
     
     console.log('Google OAuth callback received, exchanging code for token...');
     
-    // Exchange code for access token
+    // Exchange code for access token - FIXED PARAMETER NAME
     const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
       method: 'POST',
       headers: {
@@ -663,7 +660,7 @@ router.get('/google/callback', async (req, res) => {
       },
       body: new URLSearchParams({
         client_id: process.env.GOOGLE_CLIENT_ID,
-        clientSecret: process.env.GOOGLE_CLIENT_SECRET, // Changed from client_secret
+        client_secret: process.env.GOOGLE_CLIENT_SECRET, // FIXED: client_secret NOT clientSecret
         code: code,
         redirect_uri: process.env.GOOGLE_CALLBACK_URL,
         grant_type: 'authorization_code'
@@ -748,13 +745,11 @@ router.get('/google/callback', async (req, res) => {
     
     console.log('JWT token generated, redirecting to frontend...');
     
-    // Redirect to frontend with token AND user data in hash (not query params)
-    // This prevents the token from being logged in server logs
+    // Create user data object for redirect
     const userData = {
       id: user._id,
       username: user.username,
-      email: user.email,
-      karma: user.karma || 0
+      email: user.email
     };
     
     // Use hash instead of query params for security
@@ -771,7 +766,7 @@ router.get('/google/callback', async (req, res) => {
 
 
 /* ---------------------------------------------------
-   GITHUB CALLBACK
+   GITHUB CALLBACK - FIXED VERSION
 --------------------------------------------------- */
 router.get('/github/callback', async (req, res) => {
   try {
@@ -805,7 +800,7 @@ router.get('/github/callback', async (req, res) => {
         client_id: process.env.GITHUB_CLIENT_ID,
         client_secret: process.env.GITHUB_CLIENT_SECRET,
         code: code,
-        redirect_uri: `${process.env.API_URL || 'http://localhost:5000'}/auth/github/callback`
+        redirect_uri: `${process.env.API_URL || 'http://localhost:5000'}/api/auth/github/callback` // FIXED: added /api
       })
     });
     
@@ -900,11 +895,19 @@ router.get('/github/callback', async (req, res) => {
     
     console.log('JWT token generated, redirecting to frontend...');
     
-    // Redirect to frontend with token
-   
-res.redirect(
-  `${process.env.FRONTEND_URL}/auth/callback#token=${token}&user=${encodeURIComponent(JSON.stringify(userData))}&provider=github`
-);
+    // Create user data object for redirect (MISSING IN YOUR CODE)
+    const userData = {
+      id: user._id,
+      username: user.username,
+      email: user.email
+    };
+    
+    // Redirect to frontend with token and user data in hash
+    const encodedUserData = encodeURIComponent(JSON.stringify(userData));
+    res.redirect(
+      `${process.env.FRONTEND_URL}/auth/callback#token=${token}&user=${encodedUserData}&provider=github`
+    );
+    
   } catch (error) {
     console.error('GitHub OAuth callback error:', error);
     res.redirect(`${process.env.FRONTEND_URL || 'http://localhost:3000'}/login?error=social_auth_failed`);
