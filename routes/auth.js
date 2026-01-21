@@ -580,7 +580,7 @@ router.get('/google', (req, res) => {
   res.redirect(authUrl);
 });
 
-router.get('/github', (req, res) => {
+router.get('/api/auth/github', (req, res) => {
   const authUrl = `https://github.com/login/oauth/authorize?${new URLSearchParams({
     client_id: process.env.GITHUB_CLIENT_ID,
     redirect_uri: process.env.GITHUB_CALLBACK_URL,
