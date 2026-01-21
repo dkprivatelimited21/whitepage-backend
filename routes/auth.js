@@ -580,8 +580,8 @@ router.get('/google', (req, res) => {
   res.redirect(authUrl);
 });
 
-// Add this route for /api/auth/github
-router.get('/api/auth/github', (req, res) => {
+// Add this route for /github
+router.get('/github', (req, res) => {
   if (!process.env.GITHUB_CLIENT_ID) {
     return res.status(501).json({ 
       error: 'GitHub OAuth not configured',
