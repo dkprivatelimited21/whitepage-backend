@@ -574,7 +574,21 @@ router.get('/check-username/:username', async (req, res) => {
 /* ---------------------------------------------------
    SOCIAL LOGIN INITIATION
 --------------------------------------------------- */
+/* ---------------------------------------------------
+   SOCIAL LOGIN INITIATION - GOOGLE
+--------------------------------------------------- */
 router.get('/google', (req, res) => {
+  // Check if Google OAuth is configured
+  if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CALLBACK_URL) {
+    return res.status(501).json({ 
+      error: 'Google OAuth not configured',
+      message: 'Please set GOOGLE_CLIENT_ID and GOOGLE_CALLBACK_URL in environment variables'
+    });
+  }
+  
+  console.log('Initiating Google OAuth flow...');
+  console.log('Callback URL:', process.env.GOOGLE_CALLBACK_URL);
+  
   // Redirect to Google OAuth
   const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?${new URLSearchParams({
     client_id: process.env.GOOGLE_CLIENT_ID,
@@ -583,15 +597,14 @@ router.get('/google', (req, res) => {
     scope: 'profile email',
     access_type: 'offline',
     prompt: 'consent'
-  })}`;// Change this line in /google/callback route:
-res.redirect(`${process.env.FRONTEND_URL}/auth/callback?token=${token}&provider=google`);
-
-// Make sure FRONTEND_URL is set in your .env:
-// FRONTEND_URL=https://whitepage-one.vercel.app
-// or FRONTEND_URL=http://localhost:3000
+  })}`;
+  
+  res.redirect(authUrl);
 });
 
-// Add this route for /github
+/* ---------------------------------------------------
+   SOCIAL LOGIN INITIATION - GITHUB
+--------------------------------------------------- */
 router.get('/github', (req, res) => {
   if (!process.env.GITHUB_CLIENT_ID) {
     return res.status(501).json({ 
@@ -608,8 +621,6 @@ router.get('/github', (req, res) => {
   
   res.redirect(authUrl);
 });
-
-
 router.get('/facebook', (req, res) => {
   const authUrl = `https://www.facebook.com/v17.0/dialog/oauth?${new URLSearchParams({
     client_id: process.env.FACEBOOK_CLIENT_ID,
