@@ -580,14 +580,24 @@ router.get('/google', (req, res) => {
   res.redirect(authUrl);
 });
 
+// Add this route for /api/auth/github
 router.get('/api/auth/github', (req, res) => {
+  if (!process.env.GITHUB_CLIENT_ID) {
+    return res.status(501).json({ 
+      error: 'GitHub OAuth not configured',
+      message: 'Please set GITHUB_CLIENT_ID in environment variables'
+    });
+  }
+  
   const authUrl = `https://github.com/login/oauth/authorize?${new URLSearchParams({
     client_id: process.env.GITHUB_CLIENT_ID,
-    redirect_uri: process.env.GITHUB_CALLBACK_URL,
+    redirect_uri: `${process.env.API_URL || 'https://whitepage-backend.onrender.com'}/api/auth/github/callback`,
     scope: 'user:email'
   })}`;
+  
   res.redirect(authUrl);
 });
+
 
 router.get('/facebook', (req, res) => {
   const authUrl = `https://www.facebook.com/v17.0/dialog/oauth?${new URLSearchParams({
