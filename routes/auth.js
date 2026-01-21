@@ -616,52 +616,106 @@ router.get('/facebook', (req, res) => {
 /* ---------------------------------------------------
    SOCIAL LOGIN CALLBACKS
 --------------------------------------------------- */
+/* ---------------------------------------------------
+   GOOGLE CALLBACK
+--------------------------------------------------- */
 router.get('/google/callback', async (req, res) => {
   try {
-    const { code } = req.query;
+    const { code, error } = req.query;
     
-    // Exchange code for tokens
+    if (error) {
+      console.error('Google OAuth error:', error);
+      return res.redirect(`${process.env.FRONTEND_URL}/login?error=${error}`);
+    }
+    
+    if (!code) {
+      return res.status(400).json({ error: 'No authorization code received' });
+    }
+    
+    console.log('Google OAuth callback received, exchanging code for token...');
+    
+    // Exchange code for access token
     const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
       body: new URLSearchParams({
-        code,
         client_id: process.env.GOOGLE_CLIENT_ID,
         client_secret: process.env.GOOGLE_CLIENT_SECRET,
+        code: code,
         redirect_uri: process.env.GOOGLE_CALLBACK_URL,
         grant_type: 'authorization_code'
       })
     });
     
-    const tokens = await tokenResponse.json();
+    const tokenData = await tokenResponse.json();
     
-    // Get user info
+    if (!tokenData.access_token) {
+      console.error('No access token received from Google:', tokenData);
+      return res.redirect(`${process.env.FRONTEND_URL}/login?error=google_token_failed`);
+    }
+    
+    console.log('Access token received, fetching user info...');
+    
+    // Get user info from Google
     const userResponse = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
-      headers: { Authorization: `Bearer ${tokens.access_token}` }
+      headers: {
+        'Authorization': `Bearer ${tokenData.access_token}`
+      }
     });
     
     const userInfo = await userResponse.json();
     
-    // Find or create user
-    let user = await User.findOne({ google_id: userInfo.id });
+    if (!userInfo.id) {
+      console.error('Invalid user info from Google:', userInfo);
+      return res.redirect(`${process.env.FRONTEND_URL}/login?error=google_user_failed`);
+    }
+    
+    console.log('Google user info received:', userInfo.email);
+    
+    // Find or create user in your database
+    let user = await User.findOne({ 
+      $or: [
+        { googleId: userInfo.id }, // Use googleId (not google_id)
+        { email: userInfo.email }
+      ]
+    });
     
     if (!user) {
-      user = await User.findOne({ email: userInfo.email });
+      // Create new user
+      console.log('Creating new user for Google ID:', userInfo.id);
       
-      if (user) {
-        // Link Google account to existing user
-        user.google_id = userInfo.id;
-        await user.save();
-      } else {
-        // Create new user
-        user = await User.create({
-          google_id: userInfo.id,
-          email: userInfo.email,
-          email_verified: userInfo.verified_email || false,
-          username: userInfo.name?.replace(/\s+/g, '_').toLowerCase() + '_' + Date.now().toString().slice(-6),
-          profile_picture: userInfo.picture
-        });
+      // Generate a username from Google name
+      let username = userInfo.name?.replace(/\s+/g, '_').toLowerCase() || 
+                    userInfo.email.split('@')[0];
+      
+      // Ensure unique username
+      let usernameExists = await User.findOne({ username });
+      let counter = 1;
+      while (usernameExists) {
+        username = `${userInfo.email.split('@')[0]}_${counter}`;
+        usernameExists = await User.findOne({ username });
+        counter++;
       }
+      
+      user = new User({
+        googleId: userInfo.id,
+        email: userInfo.email,
+        emailVerified: userInfo.verified_email || false,
+        username: username,
+        profilePicture: userInfo.picture,
+        password: crypto.randomBytes(16).toString('hex') // Random password for social login
+      });
+      
+      await user.save();
+      console.log('New user created:', user.username);
+      
+    } else if (!user.googleId) {
+      // Link Google account to existing user
+      user.googleId = userInfo.id;
+      await user.save();
+      console.log('Google account linked to existing user:', user.username);
     }
     
     // Generate JWT token
@@ -671,15 +725,26 @@ router.get('/google/callback', async (req, res) => {
       { expiresIn: '7d' }
     );
     
-    // Redirect to frontend with token
-    res.redirect(`${process.env.FRONTEND_URL}/auth/callback?token=${token}&provider=google`);
+    console.log('JWT token generated, redirecting to frontend...');
+    
+    // Include basic user info in redirect URL
+    const userData = {
+      id: user._id,
+      username: user.username,
+      email: user.email,
+      karma: user.karma || 0
+    };
+    
+    // Redirect to frontend
+    res.redirect(
+      `${process.env.FRONTEND_URL}/auth/callback?token=${token}&user=${encodeURIComponent(JSON.stringify(userData))}&provider=google`
+    );
     
   } catch (error) {
-    console.error('Google OAuth error:', error);
+    console.error('Google OAuth callback error:', error);
     res.redirect(`${process.env.FRONTEND_URL}/login?error=social_auth_failed`);
   }
 });
-
 
 
 /* ---------------------------------------------------
