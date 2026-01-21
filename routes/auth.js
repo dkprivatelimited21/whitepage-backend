@@ -602,7 +602,7 @@ router.get('/facebook', (req, res) => {
 /* ---------------------------------------------------
    SOCIAL LOGIN CALLBACKS
 --------------------------------------------------- */
-router.get('/google/callback', async (req, res) => {
+router.get('auth/google/callback', async (req, res) => {
   try {
     const { code } = req.query;
     
