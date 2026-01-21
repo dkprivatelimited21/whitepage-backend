@@ -87,7 +87,7 @@ app.use('/api/auth/register', authLimiter);
 /* ---------------------------------------------------
    ROUTES
 --------------------------------------------------- */
-app.use('/auth', authRoutes);
+app.use('/api/auth', authRoutes);
 app.use('/api/posts', postRoutes);
 app.use('/api/votes', voteRoutes);
 app.use('/api/communities', communityRoutes);
