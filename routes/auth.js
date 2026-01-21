@@ -336,10 +336,18 @@ router.post('/reset-password/:token', resetLimiter, async (req, res) => {
 /* ---------------------------------------------------
    VERIFY TOKEN/ME - Get current user info
 --------------------------------------------------- */
+/* ---------------------------------------------------
+   VERIFY TOKEN/ME - Get current user info
+--------------------------------------------------- */
 router.get('/me', async (req, res) => {
   try {
-    // Get token from header
-    const token = req.headers.authorization?.split(' ')[1];
+    // Get token from header OR query parameter
+    let token = req.headers.authorization?.split(' ')[1];
+    
+    // If not in header, check query parameter
+    if (!token && req.query.token) {
+      token = req.query.token;
+    }
     
     if (!token) {
       return res.status(401).json({ 
@@ -364,7 +372,6 @@ router.get('/me', async (req, res) => {
         id: user._id,
         username: user.username,
         email: user.email,
-        karma: user.karma || 0,
         createdAt: user.createdAt,
         lastLogin: user.lastLogin
       },
@@ -619,6 +626,9 @@ router.get('/facebook', (req, res) => {
 /* ---------------------------------------------------
    GOOGLE CALLBACK
 --------------------------------------------------- */
+/* ---------------------------------------------------
+   GOOGLE CALLBACK - FIXED VERSION
+--------------------------------------------------- */
 router.get('/google/callback', async (req, res) => {
   try {
     const { code, error } = req.query;
@@ -642,7 +652,7 @@ router.get('/google/callback', async (req, res) => {
       },
       body: new URLSearchParams({
         client_id: process.env.GOOGLE_CLIENT_ID,
-        client_secret: process.env.GOOGLE_CLIENT_SECRET,
+        clientSecret: process.env.GOOGLE_CLIENT_SECRET, // Changed from client_secret
         code: code,
         redirect_uri: process.env.GOOGLE_CALLBACK_URL,
         grant_type: 'authorization_code'
@@ -677,7 +687,7 @@ router.get('/google/callback', async (req, res) => {
     // Find or create user in your database
     let user = await User.findOne({ 
       $or: [
-        { googleId: userInfo.id }, // Use googleId (not google_id)
+        { googleId: userInfo.id },
         { email: userInfo.email }
       ]
     });
@@ -727,7 +737,8 @@ router.get('/google/callback', async (req, res) => {
     
     console.log('JWT token generated, redirecting to frontend...');
     
-    // Include basic user info in redirect URL
+    // Redirect to frontend with token AND user data in hash (not query params)
+    // This prevents the token from being logged in server logs
     const userData = {
       id: user._id,
       username: user.username,
@@ -735,9 +746,10 @@ router.get('/google/callback', async (req, res) => {
       karma: user.karma || 0
     };
     
-    // Redirect to frontend
+    // Use hash instead of query params for security
+    const encodedUserData = encodeURIComponent(JSON.stringify(userData));
     res.redirect(
-      `${process.env.FRONTEND_URL}/auth/callback?token=${token}&user=${encodeURIComponent(JSON.stringify(userData))}&provider=google`
+      `${process.env.FRONTEND_URL}/auth/callback#token=${token}&user=${encodedUserData}&provider=google`
     );
     
   } catch (error) {
@@ -878,8 +890,10 @@ router.get('/github/callback', async (req, res) => {
     console.log('JWT token generated, redirecting to frontend...');
     
     // Redirect to frontend with token
-    res.redirect(`${process.env.FRONTEND_URL || 'http://localhost:3000'}/auth/callback?token=${token}&provider=github`);
-    
+   
+res.redirect(
+  `${process.env.FRONTEND_URL}/auth/callback#token=${token}&user=${encodeURIComponent(JSON.stringify(userData))}&provider=github`
+);
   } catch (error) {
     console.error('GitHub OAuth callback error:', error);
     res.redirect(`${process.env.FRONTEND_URL || 'http://localhost:3000'}/login?error=social_auth_failed`);
