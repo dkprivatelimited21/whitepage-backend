@@ -671,6 +671,361 @@ router.get('/user/:username', async (req, res) => {
     });
   }
 });
+
+
+
+// Add this search route in posts.js (add it after the other static routes, before the dynamic routes)
+
+/* ---------------------------------------------------
+   SEARCH POSTS, COMMUNITIES, USERS
+   This is the primary search endpoint for your Header.jsx
+--------------------------------------------------- */
+router.get('/search', async (req, res) => {
+  try {
+    const { q: query, type = 'all', page = 1, limit = 10 } = req.query;
+    
+    if (!query || query.trim() === '') {
+      return res.status(400).json({
+        success: false,
+        error: 'Search query is required'
+      });
+    }
+
+    const searchQuery = query.trim().toLowerCase();
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const skip = (pageNum - 1) * limitNum;
+
+    console.log(`Searching for: "${searchQuery}", type: ${type}, page: ${pageNum}, limit: ${limitNum}`);
+
+    let results = {
+      posts: [],
+      communities: [],
+      users: []
+    };
+
+    let totalResults = 0;
+
+    // Search posts
+    if (type === 'all' || type === 'posts') {
+      const postQuery = {
+        $or: [
+          { title: { $regex: searchQuery, $options: 'i' } },
+          { content: { $regex: searchQuery, $options: 'i' } },
+          { subreddit: { $regex: searchQuery, $options: 'i' } }
+        ]
+      };
+
+      try {
+        const [posts, postCount] = await Promise.all([
+          Post.find(postQuery)
+            .sort({ createdAt: -1 })
+            .skip(type === 'posts' ? skip : 0)
+            .limit(type === 'posts' ? limitNum : 5)
+            .populate('author', 'username')
+            .lean(),
+          type === 'posts' ? Post.countDocuments(postQuery) : Promise.resolve(0)
+        ]);
+
+        results.posts = posts.map(post => {
+          const upvoteCount = post.upvotes?.length || 0;
+          const downvoteCount = post.downvotes?.length || 0;
+          
+          return {
+            _id: post._id,
+            title: post.title,
+            content: post.content?.substring(0, 200) + (post.content?.length > 200 ? '...' : ''),
+            subreddit: post.subreddit,
+            author: post.author,
+            authorName: post.author?.username,
+            votes: upvoteCount - downvoteCount,
+            commentCount: post.commentCount || 0,
+            createdAt: post.createdAt,
+            type: 'post',
+            highlight: 'Post'
+          };
+        });
+
+        if (type === 'posts') {
+          totalResults = postCount;
+        }
+      } catch (error) {
+        console.error('Error searching posts:', error);
+        results.posts = [];
+      }
+    }
+
+    // Search communities (if you have Community model)
+    if (type === 'all' || type === 'communities') {
+      try {
+        const Community = require('../models/Community');
+        const communityQuery = {
+          $or: [
+            { name: { $regex: searchQuery, $options: 'i' } },
+            { displayName: { $regex: searchQuery, $options: 'i' } },
+            { description: { $regex: searchQuery, $options: 'i' } }
+          ]
+        };
+
+        const communities = await Community.find(communityQuery)
+          .sort({ memberCount: -1 })
+          .skip(type === 'communities' ? skip : 0)
+          .limit(type === 'communities' ? limitNum : 5)
+          .lean();
+
+        results.communities = communities.map(community => ({
+          _id: community._id,
+          name: community.name,
+          displayName: community.displayName,
+          description: community.description,
+          memberCount: community.memberCount || 0,
+          createdAt: community.createdAt,
+          type: 'community',
+          highlight: 'Community'
+        }));
+
+        if (type === 'communities') {
+          totalResults = await Community.countDocuments(communityQuery);
+        }
+      } catch (error) {
+        console.error('Error searching communities:', error);
+        // If Community model doesn't exist, return empty array
+        results.communities = [];
+      }
+    }
+
+    // Search users
+    if (type === 'all' || type === 'users') {
+      const userQuery = {
+        username: { $regex: searchQuery, $options: 'i' }
+      };
+
+      try {
+        const User = require('../models/User');
+        const [users, userCount] = await Promise.all([
+          User.find(userQuery)
+            .select('username karma createdAt bio')
+            .sort({ karma: -1 })
+            .skip(type === 'users' ? skip : 0)
+            .limit(type === 'users' ? limitNum : 5)
+            .lean(),
+          type === 'users' ? User.countDocuments(userQuery) : Promise.resolve(0)
+        ]);
+
+        results.users = users.map(user => ({
+          _id: user._id,
+          username: user.username,
+          karma: user.karma || 0,
+          createdAt: user.createdAt,
+          bio: user.bio,
+          type: 'user',
+          highlight: 'User'
+        }));
+
+        if (type === 'users') {
+          totalResults = userCount;
+        }
+      } catch (error) {
+        console.error('Error searching users:', error);
+        results.users = [];
+      }
+    }
+
+    // If type is 'all', combine and sort by relevance
+    if (type === 'all') {
+      const allResults = [
+        ...results.posts,
+        ...results.communities,
+        ...results.users
+      ];
+
+      // Sort by relevance (you can adjust this algorithm)
+      allResults.sort((a, b) => {
+        // Give higher priority to exact matches
+        const aScore = getRelevanceScore(a, searchQuery);
+        const bScore = getRelevanceScore(b, searchQuery);
+        return bScore - aScore;
+      });
+
+      // Take top results for all search
+      results.all = allResults.slice(0, 10);
+    }
+
+    res.json({
+      success: true,
+      query: searchQuery,
+      results: results,
+      totalResults: totalResults,
+      page: type !== 'all' ? pageNum : 1,
+      totalPages: type !== 'all' ? Math.ceil(totalResults / limitNum) : 1,
+      type: type
+    });
+
+  } catch (error) {
+    console.error('Search error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Search failed. Please try again.'
+    });
+  }
+});
+
+// Helper function for relevance scoring
+function getRelevanceScore(item, query) {
+  let score = 0;
+  const queryWords = query.toLowerCase().split(' ');
+  
+  // Check for exact match in title/name
+  if (item.title && item.title.toLowerCase().includes(query)) {
+    score += 100;
+  }
+  if (item.name && item.name.toLowerCase().includes(query)) {
+    score += 100;
+  }
+  if (item.username && item.username.toLowerCase().includes(query)) {
+    score += 100;
+  }
+  
+  // Check for partial matches
+  queryWords.forEach(word => {
+    if (item.title && item.title.toLowerCase().includes(word)) {
+      score += 10;
+    }
+    if (item.name && item.name.toLowerCase().includes(word)) {
+      score += 10;
+    }
+    if (item.username && item.username.toLowerCase().includes(word)) {
+      score += 10;
+    }
+    if (item.content && item.content.toLowerCase().includes(word)) {
+      score += 5;
+    }
+    if (item.description && item.description.toLowerCase().includes(word)) {
+      score += 5;
+    }
+  });
+  
+  // Recent items get higher score
+  if (item.createdAt) {
+    const daysOld = (Date.now() - new Date(item.createdAt).getTime()) / (1000 * 60 * 60 * 24);
+    if (daysOld < 7) score += 20;
+    else if (daysOld < 30) score += 10;
+  }
+  
+  // Popular items get higher score
+  if (item.votes > 0) score += item.votes;
+  if (item.memberCount > 0) score += item.memberCount;
+  if (item.karma > 0) score += item.karma;
+  
+  return score;
+}
+
+/* ---------------------------------------------------
+   SIMPLIFIED SEARCH FOR HEADER AUTOCOMPLETE
+--------------------------------------------------- */
+router.get('/search/autocomplete', async (req, res) => {
+  try {
+    const { q: query } = req.query;
+    
+    if (!query || query.trim() === '' || query.length < 2) {
+      return res.json({
+        success: true,
+        posts: [],
+        communities: [],
+        users: []
+      });
+    }
+
+    const searchQuery = query.trim().toLowerCase();
+    
+    const results = {
+      posts: [],
+      communities: [],
+      users: []
+    };
+
+    // Search posts (titles only for autocomplete)
+    const posts = await Post.find({
+      title: { $regex: searchQuery, $options: 'i' }
+    })
+    .select('title subreddit createdAt votes commentCount')
+    .sort({ createdAt: -1 })
+    .limit(3)
+    .lean();
+
+    results.posts = posts.map(post => ({
+      _id: post._id,
+      title: post.title,
+      subreddit: post.subreddit,
+      type: 'post'
+    }));
+
+    // Search communities
+    try {
+      const Community = require('../models/Community');
+      const communities = await Community.find({
+        $or: [
+          { name: { $regex: searchQuery, $options: 'i' } },
+          { displayName: { $regex: searchQuery, $options: 'i' } }
+        ]
+      })
+      .select('name displayName memberCount')
+      .sort({ memberCount: -1 })
+      .limit(2)
+      .lean();
+
+      results.communities = communities.map(community => ({
+        _id: community._id,
+        name: community.name,
+        displayName: community.displayName,
+        memberCount: community.memberCount || 0,
+        type: 'community'
+      }));
+    } catch (error) {
+      // Community model not available
+    }
+
+    // Search users
+    try {
+      const User = require('../models/User');
+      const users = await User.find({
+        username: { $regex: searchQuery, $options: 'i' }
+      })
+      .select('username karma')
+      .sort({ karma: -1 })
+      .limit(2)
+      .lean();
+
+      results.users = users.map(user => ({
+        _id: user._id,
+        username: user.username,
+        karma: user.karma || 0,
+        type: 'user'
+      }));
+    } catch (error) {
+      console.error('Error searching users:', error);
+    }
+
+    res.json({
+      success: true,
+      query: searchQuery,
+      results: results
+    });
+
+  } catch (error) {
+    console.error('Autocomplete search error:', error);
+    res.json({
+      success: false,
+      posts: [],
+      communities: [],
+      users: []
+    });
+  }
+});
+
+
+
+
 // ====================
 // DYNAMIC ROUTES (/:id) - MUST BE AFTER ALL STATIC ROUTES
 // ====================
