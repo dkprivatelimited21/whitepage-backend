@@ -1,5 +1,5 @@
 {
-  "name": "reddit-clone-api",
+  "name": "whitepage-backend",
   "version": "1.0.0",
   "description": "Secure Reddit Clone API",
   "main": "server.js",
@@ -29,7 +29,9 @@
     "nodemailer": "^6.9.4",
     "jsonwebtoken": "^9.0.0",
     "bcryptjs": "^2.4.3",
-    "validator": "^13.9.0"
+    "validator": "^13.9.0",
+    "open-graph-scraper": "^6.0.0",
+    "node-fetch": "^2.6.9"
   },
   "devDependencies": {
     "nodemon": "^2.0.22",
