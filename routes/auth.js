@@ -1,4 +1,3 @@
-// routes/auth.js - Updated with username or email login
 const express = require('express');
 const router = express.Router();
 const jwt = require('jsonwebtoken');
@@ -6,8 +5,6 @@ const User = require('../models/User');
 const rateLimit = require('express-rate-limit');
 const crypto = require('crypto');
 const authMiddleware = require('../middleware/auth');
-
-
 
 // Rate limiting for registration
 const registerLimiter = rateLimit({
@@ -336,9 +333,6 @@ router.post('/reset-password/:token', resetLimiter, async (req, res) => {
 /* ---------------------------------------------------
    VERIFY TOKEN/ME - Get current user info
 --------------------------------------------------- */
-/* ---------------------------------------------------
-   VERIFY TOKEN/ME - Get current user info
---------------------------------------------------- */
 router.get('/me', async (req, res) => {
   try {
     // Get token from header OR query parameter
@@ -372,8 +366,11 @@ router.get('/me', async (req, res) => {
         id: user._id,
         username: user.username,
         email: user.email,
+        bio: user.bio,
+        socialLinks: user.socialLinks || [],
         createdAt: user.createdAt,
-        lastLogin: user.lastLogin
+        lastLogin: user.lastLogin,
+        karma: user.karma || 0
       },
       success: true
     });
@@ -400,20 +397,157 @@ router.get('/me', async (req, res) => {
 });
 
 /* ---------------------------------------------------
-   UPDATE PROFILE
+   UPDATE USER PROFILE (with social links and bio)
 --------------------------------------------------- */
-router.put('/profile', async (req, res) => {
+router.put('/profile', authMiddleware, async (req, res) => {
   try {
-    const token = req.headers.authorization?.split(' ')[1];
+    const userId = req.user._id;
+    const { bio, socialLinks } = req.body;
+
+    // Validate socialLinks if provided
+    if (socialLinks && Array.isArray(socialLinks)) {
+      for (const link of socialLinks) {
+        // Validate each link has required fields
+        if (!link.platform || !link.url) {
+          return res.status(400).json({ 
+            error: 'Each social link must have platform and URL' 
+          });
+        }
+        
+        // Validate URL format
+        try {
+          new URL(link.url);
+        } catch {
+          return res.status(400).json({ 
+            error: 'Invalid URL in social links' 
+          });
+        }
+        
+        // Validate platform length
+        if (link.platform.length > 50) {
+          return res.status(400).json({ 
+            error: 'Platform name too long (max 50 characters)' 
+          });
+        }
+        
+        // Validate URL length
+        if (link.url.length > 500) {
+          return res.status(400).json({ 
+            error: 'URL too long (max 500 characters)' 
+          });
+        }
+      }
+    }
+
+    // Prepare update object
+    const updateData = {};
     
-    if (!token) {
-      return res.status(401).json({ 
-        error: 'Authentication required' 
+    if (bio !== undefined) {
+      if (bio.length > 500) {
+        return res.status(400).json({ 
+          error: 'Bio too long (max 500 characters)' 
+        });
+      }
+      updateData.bio = bio;
+    }
+    
+    if (socialLinks !== undefined) {
+      updateData.socialLinks = socialLinks;
+    }
+
+    // Update user
+    const user = await User.findByIdAndUpdate(
+      userId,
+      updateData,
+      { 
+        new: true,
+        runValidators: true 
+      }
+    ).select('-password -resetPasswordToken -resetPasswordExpires');
+
+    if (!user) {
+      return res.status(404).json({ 
+        error: 'User not found' 
       });
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    const user = await User.findById(decoded.userId);
+    res.json({
+      message: 'Profile updated successfully',
+      user: {
+        id: user._id,
+        username: user.username,
+        email: user.email,
+        bio: user.bio,
+        socialLinks: user.socialLinks || [],
+        createdAt: user.createdAt,
+        karma: user.karma || 0
+      },
+      success: true
+    });
+
+  } catch (error) {
+    console.error('Profile update error:', error);
+    
+    if (error.name === 'ValidationError') {
+      return res.status(400).json({ 
+        error: error.message 
+      });
+    }
+    
+    res.status(500).json({ 
+      error: 'Profile update failed. Please try again.' 
+    });
+  }
+});
+
+/* ---------------------------------------------------
+   GET USER PROFILE BY USERNAME
+--------------------------------------------------- */
+router.get('/profile/:username', async (req, res) => {
+  try {
+    const { username } = req.params;
+    
+    if (!username) {
+      return res.status(400).json({ 
+        error: 'Username is required' 
+      });
+    }
+
+    const user = await User.findOne({ username })
+      .select('-password -resetPasswordToken -resetPasswordExpires -email -loginAttempts -lockUntil');
+
+    if (!user) {
+      return res.status(404).json({ 
+        error: 'User not found' 
+      });
+    }
+
+    res.json({
+      user: {
+        id: user._id,
+        username: user.username,
+        bio: user.bio,
+        socialLinks: user.socialLinks || [],
+        createdAt: user.createdAt,
+        karma: user.karma || 0
+      },
+      success: true
+    });
+
+  } catch (error) {
+    console.error('Get profile error:', error);
+    res.status(500).json({ 
+      error: 'Failed to fetch user profile' 
+    });
+  }
+});
+
+/* ---------------------------------------------------
+   UPDATE PROFILE (username, email, password)
+--------------------------------------------------- */
+router.put('/update', authMiddleware, async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id);
     
     if (!user) {
       return res.status(404).json({ 
@@ -502,6 +636,8 @@ router.put('/profile', async (req, res) => {
         id: user._id,
         username: user.username,
         email: user.email,
+        bio: user.bio,
+        socialLinks: user.socialLinks || [],
         karma: user.karma || 0
       },
       token: newToken,
@@ -523,57 +659,6 @@ router.put('/profile', async (req, res) => {
   }
 });
 
-/* ---------------------------------------------------
-   CHECK USERNAME AVAILABILITY
---------------------------------------------------- */
-router.get('/check-username/:username', async (req, res) => {
-  try {
-    const { username } = req.params;
-    
-    if (!username || username.length < 3) {
-      return res.status(400).json({ 
-        error: 'Username must be at least 3 characters' 
-      });
-    }
-
-    // Check if username exists
-    const existingUser = await User.findOne({ username });
-    
-    if (existingUser) {
-      return res.json({ 
-        available: false,
-        message: 'Username already taken' 
-      });
-    }
-
-    // Check for suspicious usernames
-    if (await isSuspiciousUsername(username)) {
-      return res.json({ 
-        available: false,
-        message: 'Username not allowed' 
-      });
-    }
-
-    res.json({
-      available: true,
-      message: 'Username is available'
-    });
-
-  } catch (error) {
-    console.error('Username check error:', error);
-    res.status(500).json({ 
-      error: 'Failed to check username availability' 
-    });
-  }
-});
-
-
-
-// routes/auth.js - ADD THESE ROUTES FOR SOCIAL LOGIN
-
-/* ---------------------------------------------------
-   SOCIAL LOGIN INITIATION
---------------------------------------------------- */
 /* ---------------------------------------------------
    SOCIAL LOGIN INITIATION - GOOGLE
 --------------------------------------------------- */
@@ -621,6 +706,10 @@ router.get('/github', (req, res) => {
   
   res.redirect(authUrl);
 });
+
+/* ---------------------------------------------------
+   SOCIAL LOGIN INITIATION - FACEBOOK
+--------------------------------------------------- */
 router.get('/facebook', (req, res) => {
   const authUrl = `https://www.facebook.com/v17.0/dialog/oauth?${new URLSearchParams({
     client_id: process.env.FACEBOOK_CLIENT_ID,
@@ -632,10 +721,7 @@ router.get('/facebook', (req, res) => {
 });
 
 /* ---------------------------------------------------
-   SOCIAL LOGIN CALLBACKS
---------------------------------------------------- */
-/* ---------------------------------------------------
-   GOOGLE CALLBACK - FIXED VERSION
+   GOOGLE CALLBACK
 --------------------------------------------------- */
 router.get('/google/callback', async (req, res) => {
   try {
@@ -652,7 +738,7 @@ router.get('/google/callback', async (req, res) => {
     
     console.log('Google OAuth callback received, exchanging code for token...');
     
-    // Exchange code for access token - FIXED PARAMETER NAME
+    // Exchange code for access token
     const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
       method: 'POST',
       headers: {
@@ -660,7 +746,7 @@ router.get('/google/callback', async (req, res) => {
       },
       body: new URLSearchParams({
         client_id: process.env.GOOGLE_CLIENT_ID,
-        client_secret: process.env.GOOGLE_CLIENT_SECRET, // FIXED: client_secret NOT clientSecret
+        client_secret: process.env.GOOGLE_CLIENT_SECRET,
         code: code,
         redirect_uri: process.env.GOOGLE_CALLBACK_URL,
         grant_type: 'authorization_code'
@@ -764,9 +850,8 @@ router.get('/google/callback', async (req, res) => {
   }
 });
 
-
 /* ---------------------------------------------------
-   GITHUB CALLBACK - FIXED VERSION
+   GITHUB CALLBACK
 --------------------------------------------------- */
 router.get('/github/callback', async (req, res) => {
   try {
@@ -800,7 +885,7 @@ router.get('/github/callback', async (req, res) => {
         client_id: process.env.GITHUB_CLIENT_ID,
         client_secret: process.env.GITHUB_CLIENT_SECRET,
         code: code,
-        redirect_uri: `${process.env.API_URL || 'http://localhost:5000'}/api/auth/github/callback` // FIXED: added /api
+        redirect_uri: `${process.env.API_URL || 'http://localhost:5000'}/api/auth/github/callback`
       })
     });
     
@@ -873,7 +958,7 @@ router.get('/github/callback', async (req, res) => {
         username: username,
         profilePicture: userInfo.avatar_url,
         emailVerified: !!primaryEmail,
-        password: crypto.randomBytes(16).toString('hex') // Random password for social login users
+        password: crypto.randomBytes(16).toString('hex')
       });
       
       await user.save();
@@ -895,7 +980,7 @@ router.get('/github/callback', async (req, res) => {
     
     console.log('JWT token generated, redirecting to frontend...');
     
-    // Create user data object for redirect (MISSING IN YOUR CODE)
+    // Create user data object for redirect
     const userData = {
       id: user._id,
       username: user.username,
@@ -945,7 +1030,6 @@ router.get('/facebook/callback', async (req, res) => {
   }
 });
 
-
 /* ---------------------------------------------------
    LINK/UNLINK SOCIAL ACCOUNTS
 --------------------------------------------------- */
@@ -955,7 +1039,7 @@ router.post('/link/:provider', authMiddleware, async (req, res) => {
     const { providerId } = req.body;
     const userId = req.user._id;
     
-    const update = { [`${provider}_id`]: providerId };
+    const update = { [`${provider}Id`]: providerId };
     await User.findByIdAndUpdate(userId, update);
     
     res.json({ success: true, message: `${provider} account linked` });
@@ -969,7 +1053,7 @@ router.post('/unlink/:provider', authMiddleware, async (req, res) => {
     const { provider } = req.params;
     const userId = req.user._id;
     
-    const update = { [`${provider}_id`]: null };
+    const update = { [`${provider}Id`]: null };
     await User.findByIdAndUpdate(userId, update);
     
     res.json({ success: true, message: `${provider} account unlinked` });
@@ -978,10 +1062,49 @@ router.post('/unlink/:provider', authMiddleware, async (req, res) => {
   }
 });
 
+/* ---------------------------------------------------
+   CHECK USERNAME AVAILABILITY
+--------------------------------------------------- */
+router.get('/check-username/:username', async (req, res) => {
+  try {
+    const { username } = req.params;
+    
+    if (!username || username.length < 3) {
+      return res.status(400).json({ 
+        error: 'Username must be at least 3 characters' 
+      });
+    }
 
+    // Check if username exists
+    const existingUser = await User.findOne({ username });
+    
+    if (existingUser) {
+      return res.json({ 
+        available: false,
+        message: 'Username already taken' 
+      });
+    }
 
+    // Check for suspicious usernames
+    if (await isSuspiciousUsername(username)) {
+      return res.json({ 
+        available: false,
+        message: 'Username not allowed' 
+      });
+    }
 
+    res.json({
+      available: true,
+      message: 'Username is available'
+    });
 
+  } catch (error) {
+    console.error('Username check error:', error);
+    res.status(500).json({ 
+      error: 'Failed to check username availability' 
+    });
+  }
+});
 
 /* ---------------------------------------------------
    CHECK EMAIL AVAILABILITY
