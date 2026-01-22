@@ -527,75 +527,150 @@ router.get('/user/:username/posts', async (req, res) => {
   }
 });
 
-// Get user profile with posts
+// ====================
+// GET USER'S POSTS WITH PROFILE INFO - UPDATED VERSION
+// ====================
 router.get('/user/:username', async (req, res) => {
   try {
+    console.log('GET /api/posts/user/:username called for:', req.params.username);
+    
     const { username } = req.params;
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
     const skip = (page - 1) * limit;
 
+    if (!username || username.trim() === '') {
+      return res.status(400).json({ 
+        success: false,
+        message: 'Username is required' 
+      });
+    }
+
+    console.log(`Looking for user: ${username}`);
+
     // 1. Find user
-    const user = await User.findOne({ username }).select('_id username karma createdAt bio socialLinks');
+    const user = await User.findOne({ 
+      username: username.trim() 
+    }).select('_id username karma createdAt bio socialLinks');
+    
     if (!user) {
+      console.log(`User not found: ${username}`);
       return res.status(404).json({ 
         success: false,
         message: 'User not found' 
       });
     }
 
-    // 2. Find posts
-    const [posts, total] = await Promise.all([
-      Post.find({ author: user._id })
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit)
-        .populate('author', 'username karma'),
-      Post.countDocuments({ author: user._id })
-    ]);
+    console.log(`Found user: ${user.username} (ID: ${user._id})`);
 
-    // Format posts with user vote status
-    const formattedPosts = posts.map(post => {
-      const postObj = post.toObject();
-      const userId = req.user?._id?.toString();
+    // 2. Build query to find user's posts
+    const query = { author: user._id };
+    console.log('Query for posts:', query);
+
+    // 3. Find posts with pagination
+    let posts = [];
+    let total = 0;
+    
+    try {
+      [posts, total] = await Promise.all([
+        Post.find(query)
+          .sort({ createdAt: -1 })
+          .skip(skip)
+          .limit(limit)
+          .lean(), // Use lean() for better performance
+        Post.countDocuments(query)
+      ]);
       
-      const userVote = post.upvotes?.some(id => id.toString() === userId) ? 'upvote' :
-                      post.downvotes?.some(id => id.toString() === userId) ? 'downvote' : null;
+      console.log(`Found ${posts.length} posts out of ${total} total`);
+    } catch (dbError) {
+      console.error('Database query error:', dbError);
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to fetch posts',
+        error: dbError.message
+      });
+    }
+
+    // 4. Format posts for response
+    const formattedPosts = posts.map(post => {
+      console.log('Processing post:', post._id, 'Title:', post.title);
+      
+      // Get user vote status if authenticated
+      let userVote = null;
+      if (req.headers.authorization) {
+        try {
+          const token = req.headers.authorization.split(' ')[1];
+          const jwt = require('jsonwebtoken');
+          const decoded = jwt.verify(token, process.env.JWT_SECRET);
+          const userId = decoded.userId;
+          
+          const upvotes = post.upvotes || [];
+          const downvotes = post.downvotes || [];
+          
+          userVote = upvotes.some(id => id && id.toString() === userId) ? 'upvote' :
+                    downvotes.some(id => id && id.toString() === userId) ? 'downvote' : null;
+        } catch (tokenError) {
+          // Token invalid or expired
+        }
+      }
+      
+      // Calculate votes if not already calculated
+      const upvoteCount = post.upvotes ? post.upvotes.length : 0;
+      const downvoteCount = post.downvotes ? post.downvotes.length : 0;
+      const votes = post.votes || (upvoteCount - downvoteCount);
       
       return {
-        ...postObj,
-        votes: post.votes || 0,
+        _id: post._id,
+        title: post.title || 'Untitled',
+        content: post.content || '',
+        subreddit: post.subreddit || 'general',
+        createdAt: post.createdAt || new Date(),
+        authorId: user._id,
+        authorName: user.username,
+        authorKarma: user.karma || 0,
+        votes: votes,
+        commentCount: post.commentCount || 0,
         userVote: userVote,
-        authorName: post.author?.username,
-        commentCount: post.commentCount || 0
+        externalLink: post.externalLink || null
       };
     });
 
+    // 5. Prepare user info
+    const userInfo = {
+      _id: user._id,
+      username: user.username,
+      karma: user.karma || 0,
+      createdAt: user.createdAt,
+      bio: user.bio || '',
+      socialLinks: user.socialLinks || []
+    };
+
+    // 6. Calculate total pages
+    const totalPages = Math.ceil(total / limit);
+
+    console.log('Sending response with', formattedPosts.length, 'posts');
+
     res.json({
       success: true,
-      user: {
-        _id: user._id,
-        username: user.username,
-        karma: user.karma || 0,
-        createdAt: user.createdAt,
-        bio: user.bio || '',
-        socialLinks: user.socialLinks || []
-      },
+      user: userInfo,
       posts: formattedPosts,
-      page,
-      totalPages: Math.ceil(total / limit),
+      page: page,
+      totalPages: totalPages,
       totalPosts: total
     });
 
   } catch (err) {
-    console.error(err);
+    console.error('GET /api/posts/user/:username ERROR:', err);
+    console.error('Error stack:', err.stack);
+    
     res.status(500).json({ 
       success: false,
-      message: 'Server error' 
+      message: 'Server error',
+      error: err.message,
+      stack: process.env.NODE_ENV === 'development' ? err.stack : undefined
     });
   }
 });
-
 // ====================
 // DYNAMIC ROUTES (/:id) - MUST BE AFTER ALL STATIC ROUTES
 // ====================
