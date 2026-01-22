@@ -245,77 +245,150 @@ router.post('/preview-link', auth, async (req, res) => {
 // ====================
 
 // GET /api/posts/count - Get total post count
-router.get('/count', async (req, res) => {
-  try {
-    const count = await Post.countDocuments();
-    res.json({ 
-      success: true, 
-      count 
-    });
-  } catch (error) {
-    console.error('Error getting post count:', error);
-    res.status(500).json({ 
-      success: false, 
-      error: 'Failed to get post count' 
-    });
-  }
-});
-
-// GET /api/posts - Get posts with pagination
 router.get('/', async (req, res) => {
   try {
+    console.log('GET /api/posts called with query:', req.query);
+    
     const { subreddit, sort = 'new', page = 1, limit = 10 } = req.query;
     let query = {};
-    if (subreddit) query.subreddit = subreddit.toLowerCase();
+    
+    if (subreddit && subreddit.trim()) {
+      query.subreddit = subreddit.toLowerCase().trim();
+    }
 
+    // Log the query for debugging
+    console.log('Database query:', query);
+    console.log('Sort parameter:', sort);
+
+    // Determine sort option
     let sortOption = {};
-    if (sort === 'hot' || sort === 'top') sortOption = { votes: -1 };
-    else if (sort === 'best') sortOption = { votes: -1, createdAt: -1 };
-    else sortOption = { createdAt: -1 };
+    if (sort === 'hot' || sort === 'top') {
+      sortOption = { votes: -1, createdAt: -1 };
+    } else if (sort === 'best') {
+      sortOption = { votes: -1, createdAt: -1 };
+    } else if (sort === 'new') {
+      sortOption = { createdAt: -1 };
+    } else {
+      // Default to newest if sort is invalid
+      sortOption = { createdAt: -1 };
+    }
 
-    const pageNum = parseInt(page);
-    const limitNum = parseInt(limit);
+    console.log('Sort option:', sortOption);
+
+    const pageNum = parseInt(page) || 1;
+    const limitNum = parseInt(limit) || 10;
     const skip = (pageNum - 1) * limitNum;
 
-    const posts = await Post.find(query)
-      .sort(sortOption)
-      .skip(skip)
-      .limit(limitNum)
-      .populate('author', 'username karma');
+    console.log(`Fetching posts: page=${pageNum}, limit=${limitNum}, skip=${skip}`);
 
-    // Format posts for response with user vote status
-    const formattedPosts = posts.map(post => {
-      const postObj = post.toObject();
-      const userId = req.user?._id?.toString();
+    // Basic query without populate to see if it works
+    let posts;
+    try {
+      posts = await Post.find(query)
+        .sort(sortOption)
+        .skip(skip)
+        .limit(limitNum)
+        .lean(); // Use lean() for faster queries
       
-      // Calculate user's vote status for each post
-      const userVote = post.upvotes?.some(id => id.toString() === userId) ? 'upvote' :
-                      post.downvotes?.some(id => id.toString() === userId) ? 'downvote' : null;
+      console.log(`Found ${posts.length} posts`);
+    } catch (dbError) {
+      console.error('Database query error:', dbError);
+      return res.status(500).json({
+        success: false,
+        error: 'Database query failed',
+        details: dbError.message
+      });
+    }
+
+    // Get user IDs for population
+    const authorIds = posts.map(post => post.author).filter(id => id);
+    
+    // Fetch authors separately if needed
+    let authors = {};
+    if (authorIds.length > 0) {
+      try {
+        const authorDocs = await User.find({ _id: { $in: authorIds } })
+          .select('username karma')
+          .lean();
+        
+        authorDocs.forEach(author => {
+          authors[author._id] = author;
+        });
+      } catch (authorError) {
+        console.error('Error fetching authors:', authorError);
+        // Continue without author info rather than failing
+      }
+    }
+
+    // Format posts for response
+    const formattedPosts = posts.map(post => {
+      const author = authors[post.author] || { username: 'deleted', karma: 0 };
+      
+      // Check user vote if authenticated
+      let userVote = null;
+      if (req.headers.authorization) {
+        try {
+          const token = req.headers.authorization.split(' ')[1];
+          const jwt = require('jsonwebtoken');
+          const decoded = jwt.verify(token, process.env.JWT_SECRET);
+          const userId = decoded.userId;
+          
+          const upvotes = post.upvotes || [];
+          const downvotes = post.downvotes || [];
+          
+          userVote = upvotes.some(id => id.toString() === userId) ? 'upvote' :
+                    downvotes.some(id => id.toString() === userId) ? 'downvote' : null;
+        } catch (tokenError) {
+          // Token invalid, ignore user vote
+        }
+      }
       
       return {
-        ...postObj,
+        _id: post._id,
+        title: post.title || '',
+        content: post.content || '',
+        subreddit: post.subreddit || '',
+        createdAt: post.createdAt || new Date(),
+        authorId: post.author,
+        authorName: author.username,
+        authorKarma: author.karma || 0,
         votes: post.votes || 0,
+        commentCount: post.commentCount || 0,
         userVote: userVote,
-        authorName: post.author?.username,
-        commentCount: post.commentCount || 0
+        externalLink: post.externalLink || null
       };
     });
 
-    const total = await Post.countDocuments(query);
+    // Get total count
+    let total = 0;
+    try {
+      total = await Post.countDocuments(query);
+    } catch (countError) {
+      console.error('Count error:', countError);
+      total = posts.length; // Fallback to current page count
+    }
 
-    res.json({ 
+    console.log('Response prepared successfully');
+
+    res.json({
       success: true,
       posts: formattedPosts,
       page: pageNum,
       totalPages: Math.ceil(total / limitNum),
-      totalPosts: total
+      totalPosts: total,
+      sort: sort
     });
     
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ 
+    console.error('GET /api/posts ERROR:', error);
+    console.error('Error stack:', error.stack);
+    
+    // Send more detailed error for debugging
+    res.status(500).json({
       success: false,
-      message: 'Server error' 
+      error: 'Server error',
+      message: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
 });

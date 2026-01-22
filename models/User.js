@@ -137,29 +137,95 @@ const userSchema = new mongoose.Schema({
 }, {
   timestamps: true,
   toJSON: {
-    virtuals: true,
+    virtuals: false, // Temporarily disable virtuals to fix 500 error
     transform: function(doc, ret) {
       delete ret.password;
       delete ret.resetPasswordToken;
       delete ret.resetPasswordExpires;
       delete ret.loginAttempts;
       delete ret.lockUntil;
+      
+      // Manually add formatted date if createdAt exists
+      if (doc.createdAt && doc.createdAt instanceof Date && !isNaN(doc.createdAt.getTime())) {
+        try {
+          ret.joinDate = doc.createdAt.toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+          });
+        } catch (error) {
+          ret.joinDate = 'Unknown date';
+        }
+      } else {
+        ret.joinDate = 'Unknown date';
+      }
+      
+      // Manually calculate account age if needed
+      if (doc.createdAt && doc.createdAt instanceof Date && !isNaN(doc.createdAt.getTime())) {
+        const diff = Date.now() - doc.createdAt.getTime();
+        ret.accountAge = Math.floor(diff / (1000 * 60 * 60 * 24));
+        ret.isNewUser = ret.accountAge < 30;
+      } else {
+        ret.accountAge = 0;
+        ret.isNewUser = false;
+      }
+      
+      // Add profile URL
+      if (doc.username) {
+        ret.profileUrl = `/user/${doc.username}`;
+      }
+      
       return ret;
     }
   },
   toObject: {
-    virtuals: true,
+    virtuals: false, // Temporarily disable virtuals to fix 500 error
     transform: function(doc, ret) {
       delete ret.password;
       delete ret.resetPasswordToken;
       delete ret.resetPasswordExpires;
       delete ret.loginAttempts;
       delete ret.lockUntil;
+      
+      // Manually add formatted date if createdAt exists
+      if (doc.createdAt && doc.createdAt instanceof Date && !isNaN(doc.createdAt.getTime())) {
+        try {
+          ret.joinDate = doc.createdAt.toLocaleDateString('en-US', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+          });
+        } catch (error) {
+          ret.joinDate = 'Unknown date';
+        }
+      } else {
+        ret.joinDate = 'Unknown date';
+      }
+      
+      // Manually calculate account age if needed
+      if (doc.createdAt && doc.createdAt instanceof Date && !isNaN(doc.createdAt.getTime())) {
+        const diff = Date.now() - doc.createdAt.getTime();
+        ret.accountAge = Math.floor(diff / (1000 * 60 * 60 * 24));
+        ret.isNewUser = ret.accountAge < 30;
+      } else {
+        ret.accountAge = 0;
+        ret.isNewUser = false;
+      }
+      
+      // Add profile URL
+      if (doc.username) {
+        ret.profileUrl = `/user/${doc.username}`;
+      }
+      
       return ret;
     }
   }
 });
 
+// ============================================
+// TEMPORARILY COMMENTED OUT VIRTUAL PROPERTIES
+// ============================================
+/*
 // Virtual for user's full profile URL
 userSchema.virtual('profileUrl').get(function() {
   return `/user/${this.username}`;
@@ -184,6 +250,10 @@ userSchema.virtual('accountAge').get(function() {
 userSchema.virtual('isNewUser').get(function() {
   return this.accountAge < 30;
 });
+*/
+// ============================================
+// END OF COMMENTED VIRTUAL PROPERTIES
+// ============================================
 
 // Essential methods
 userSchema.methods.comparePassword = async function(password) {
@@ -251,6 +321,19 @@ userSchema.methods.getSocialLink = function(platform) {
   return this.socialLinks.find(link => 
     link.platform.toLowerCase() === platform.toLowerCase()
   ) || null;
+};
+
+// Helper method to safely get createdAt date
+userSchema.methods.getSafeCreatedAt = function() {
+  if (!this.createdAt) return new Date();
+  if (this.createdAt instanceof Date && !isNaN(this.createdAt.getTime())) {
+    return this.createdAt;
+  }
+  if (typeof this.createdAt === 'string') {
+    const parsed = new Date(this.createdAt);
+    if (!isNaN(parsed.getTime())) return parsed;
+  }
+  return new Date();
 };
 
 // Hash password before saving
