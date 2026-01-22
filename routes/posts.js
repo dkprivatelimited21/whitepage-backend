@@ -6,6 +6,63 @@ const Comment = require('../models/Comment');
 const Notification = require('../models/Notification');
 const User = require('../models/User');
 const mongoose = require('mongoose'); // Added for ObjectId validation
+const MAX_CONTENT_LENGTH = 2000;
+const URL_REGEX = /(https?:\/\/[^\s]+)/g;
+const ogs = require('open-graph-scraper');
+
+
+const ALLOWED_DOMAINS = [
+  'instagram.com',
+  'facebook.com',
+  'fb.watch',
+  'youtube.com',
+  'youtu.be',
+  'twitter.com',
+  'x.com',
+  'snapchat.com'
+];
+
+function extractLinks(text = '') {
+  return text.match(URL_REGEX) || [];
+}
+
+function isAllowedPlatform(url) {
+  return ALLOWED_DOMAINS.some(domain => url.includes(domain));
+}
+
+function detectPlatform(url) {
+  if (url.includes('instagram.com')) return 'instagram';
+  if (url.includes('facebook.com') || url.includes('fb.watch')) return 'facebook';
+  if (url.includes('youtube.com') || url.includes('youtu.be')) return 'youtube';
+  if (url.includes('twitter.com') || url.includes('x.com')) return 'twitter';
+  if (url.includes('snapchat.com')) return 'snapchat';
+  return 'unknown';
+}
+
+
+router.post('/preview-link', auth, async (req, res) => {
+  const { url } = req.body;
+
+  if (!isAllowedPlatform(url)) {
+    return res.status(400).json({ error: 'Platform not supported' });
+  }
+
+ let result;
+try {
+  const ogResponse = await ogs({ url });
+  result = ogResponse.result;
+} catch (err) {
+  return res.status(400).json({ error: 'Failed to fetch link preview' });
+}
+
+  res.json({
+    title: result.ogTitle,
+    description: result.ogDescription,
+    image: result.ogImage?.url,
+    video: result.ogVideo?.url,
+    siteName: result.ogSiteName
+  });
+});
 
 // ====================
 // STATIC ROUTES (MUST BE BEFORE /:id)
@@ -57,7 +114,9 @@ router.get('/', async (req, res, next) => {
       createdAt: post.createdAt || new Date(),
       authorId: post.author?._id,
       authorName: post.author?.username,
-      authorKarma: post.author?.karma
+
+      authorKarma: post.author?.karma,
+externalLink: post.externalLink
     }));
 
     const total = await Post.countDocuments(query);
@@ -260,16 +319,69 @@ router.get('/user/:username', async (req, res) => {
 // Create post
 router.post('/', auth, async (req, res) => {
   try {
-    const { title, content, subreddit } = req.body;
+    const { title, content = '', subreddit } = req.body;
 
-    const post = new Post({
-      title,
-      content,
-      subreddit: subreddit.toLowerCase(),
-      author: req.user._id,
-      authorName: req.user.username
-    });
 
+// Content limit
+if (content.length > MAX_CONTENT_LENGTH) {
+  return res.status(400).json({ error: 'Post exceeds character limit' });
+}
+
+// Extract links
+const links = extractLinks(content);
+
+// Enforce ONE link
+if (links.length > 1) {
+  return res.status(400).json({ error: 'Only one external link allowed per post' });
+}
+
+let externalLink = null;
+
+if (links.length === 1) {
+  const url = links[0];
+
+try {
+  new URL(url);
+} catch {
+  return res.status(400).json({ error: 'Invalid URL' });
+}
+
+
+  if (!isAllowedPlatform(url)) {
+    return res.status(400).json({ error: 'Unsupported platform link' });
+  }
+
+let result = {};
+try {
+  const ogResponse = await ogs({ url });
+  result = ogResponse.result || {};
+} catch (err) {
+  // Allow post creation without preview metadata
+  result = {};
+}
+
+externalLink = {
+  url,
+  platform: detectPlatform(url),
+  title: result.ogTitle,
+  description: result.ogDescription,
+  image: result.ogImage?.url,
+  video: result.ogVideo?.url,
+  siteName: result.ogSiteName
+};
+
+
+}
+
+
+   const post = new Post({
+  title,
+  content,
+  subreddit: subreddit.toLowerCase(),
+  author: req.user._id,
+  authorName: req.user.username,
+  externalLink
+});
     await post.save();
     res.status(201).json({ 
       success: true,

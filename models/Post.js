@@ -29,6 +29,18 @@ const postSchema = new mongoose.Schema({
     required: true
   },
 
+externalLink: {
+  url: { type: String },
+  platform: { type: String }, // instagram, youtube, etc
+  title: String,
+  description: String,
+  image: String,
+  video: String,
+  siteName: String
+},
+
+
+
   // 🔹 COMMENT COUNT (REQUIRED)
   commentCount: {
     type: Number,
