@@ -9,6 +9,7 @@ const mongoose = require('mongoose');
 const MAX_CONTENT_LENGTH = 2000;
 const URL_REGEX = /(https?:\/\/[^\s]+)/g;
 const ogs = require('open-graph-scraper');
+const authMiddleware = require('../middleware/auth');
 
 const ALLOWED_DOMAINS = [
   'instagram.com',
