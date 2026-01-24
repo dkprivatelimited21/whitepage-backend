@@ -52,8 +52,9 @@ const applyContentFilter = (req, query) => {
   }
   
   // For authenticated users, check their preference
-  if (user && user.settings) {
-    const userPref = user.settings.showAdultContent || false;
+  if (user) {
+    // Check if user has allowAdultContent field (backward compatibility)
+    const userPref = user.allowAdultContent || false;
     if (!userPref) {
       query.isAdult = false;
     }
@@ -516,12 +517,12 @@ router.get('/public/feed', async (req, res) => {
 });
 
 // Add route to get adult content separately
-router.get('/adult', auth, async (req, res) => {
+router.get('/adult', authMiddleware, async (req, res) => {
   try {
     // Check if user is allowed to view adult content
     const user = await User.findById(req.user._id);
     
-    if (!user.settings?.showAdultContent) {
+    if (!user.allowAdultContent) {
       return res.status(403).json({
         success: false,
         error: 'Adult content viewing is disabled in your settings'

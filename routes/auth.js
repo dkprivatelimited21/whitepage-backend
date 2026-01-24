@@ -1107,33 +1107,44 @@ router.get('/check-username/:username', async (req, res) => {
 });
 
 
-// Add to your auth.js routes
-router.put('/settings', auth, async (req, res) => {
+/* ---------------------------------------------------
+   UPDATE USER SETTINGS (including adult content preference)
+--------------------------------------------------- */
+router.put('/settings', authMiddleware, async (req, res) => {
   try {
     const { showAdultContent } = req.body;
+    const userId = req.user._id;
     
-    const user = await User.findById(req.user._id);
+    const user = await User.findById(userId);
     if (!user) {
-      return res.status(404).json({ error: 'User not found' });
+      return res.status(404).json({ 
+        success: false,
+        error: 'User not found' 
+      });
     }
     
-    if (!user.settings) {
-      user.settings = {};
+    // Update adult content preference
+    if (showAdultContent !== undefined) {
+      user.allowAdultContent = Boolean(showAdultContent);
     }
     
-    user.settings.showAdultContent = showAdultContent;
     await user.save();
     
     res.json({
       success: true,
-      message: 'Settings updated',
-      settings: user.settings
+      message: 'Settings updated successfully',
+      settings: {
+        showAdultContent: user.allowAdultContent
+      }
     });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error('Settings update error:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to update settings' 
+    });
   }
 });
-
 
 
 /* ---------------------------------------------------
@@ -1179,6 +1190,70 @@ router.get('/check-email/:email', async (req, res) => {
     });
   }
 });
+
+/* ---------------------------------------------------
+   VERIFY AGE (for adult content access)
+--------------------------------------------------- */
+router.post('/verify-age', authMiddleware, async (req, res) => {
+  try {
+    const { birthDate } = req.body;
+    const userId = req.user._id;
+    
+    if (!birthDate) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Birth date is required' 
+      });
+    }
+    
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ 
+        success: false,
+        error: 'User not found' 
+      });
+    }
+    
+    // Calculate age from birth date
+    const birthDateObj = new Date(birthDate);
+    const today = new Date();
+    let age = today.getFullYear() - birthDateObj.getFullYear();
+    const monthDiff = today.getMonth() - birthDateObj.getMonth();
+    
+    // Adjust age if birthday hasn't occurred yet this year
+    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDateObj.getDate())) {
+      age--;
+    }
+    
+    if (age < 18) {
+      return res.status(403).json({ 
+        success: false,
+        error: 'You must be 18 or older to view adult content' 
+      });
+    }
+    
+    // Mark user as age verified
+    user.ageVerified = true;
+    user.allowAdultContent = true;
+    await user.save();
+    
+    res.json({
+      success: true,
+      message: 'Age verification successful. You can now view adult content.',
+      ageVerified: true,
+      allowAdultContent: true
+    });
+    
+  } catch (error) {
+    console.error('Age verification error:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Age verification failed' 
+    });
+  }
+});
+
+
 
 /* ---------------------------------------------------
    SECURITY HELPER FUNCTIONS
