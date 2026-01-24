@@ -39,6 +39,35 @@ function detectPlatform(url) {
 }
 
 // ====================
+// CONTENT FILTERING MIDDLEWARE
+// ====================
+
+const applyContentFilter = (req, query) => {
+  const showAdult = req.query.showAdult === 'true';
+  const user = req.user;
+  
+  // Default: hide adult content
+  if (!showAdult) {
+    query.isAdult = false;
+  }
+  
+  // For authenticated users, check their preference
+  if (user && user.settings) {
+    const userPref = user.settings.showAdultContent || false;
+    if (!userPref) {
+      query.isAdult = false;
+    }
+  }
+  
+  // For guest users (public feed), always hide adult content
+  if (!user && req.query.public === 'true') {
+    query.isAdult = false;
+  }
+  
+  return query;
+};
+
+// ====================
 // VOTE ROUTES (CRITICAL - MUST BE ADDED)
 // ====================
 
@@ -244,16 +273,32 @@ router.post('/preview-link', auth, async (req, res) => {
 // STATIC ROUTES (MUST BE BEFORE /:id)
 // ====================
 
-// GET /api/posts/count - Get total post count
+// GET /api/posts - Main posts route with content filtering
 router.get('/', async (req, res) => {
   try {
     console.log('GET /api/posts called with query:', req.query);
     
-    const { subreddit, sort = 'new', page = 1, limit = 10 } = req.query;
+    const { 
+      subreddit, 
+      sort = 'new', 
+      page = 1, 
+      limit = 10,
+      showAdult = 'false',
+      public = 'false'
+    } = req.query;
+    
     let query = {};
     
     if (subreddit && subreddit.trim()) {
       query.subreddit = subreddit.toLowerCase().trim();
+    }
+
+    // Apply content filtering
+    query = applyContentFilter(req, query);
+    
+    // For public feed, ensure no adult content
+    if (public === 'true') {
+      query.isAdult = false;
     }
 
     // Log the query for debugging
@@ -288,7 +333,7 @@ router.get('/', async (req, res) => {
         .sort(sortOption)
         .skip(skip)
         .limit(limitNum)
-        .lean(); // Use lean() for faster queries
+        .lean();
       
       console.log(`Found ${posts.length} posts`);
     } catch (dbError) {
@@ -355,7 +400,9 @@ router.get('/', async (req, res) => {
         votes: post.votes || 0,
         commentCount: post.commentCount || 0,
         userVote: userVote,
-        externalLink: post.externalLink || null
+        externalLink: post.externalLink || null,
+        isAdult: post.isAdult || false, // Include adult flag
+        isHidden: post.isHidden || false
       };
     });
 
@@ -376,7 +423,9 @@ router.get('/', async (req, res) => {
       page: pageNum,
       totalPages: Math.ceil(total / limitNum),
       totalPosts: total,
-      sort: sort
+      sort: sort,
+      showAdult: showAdult === 'true',
+      isPublicFeed: public === 'true'
     });
     
   } catch (error) {
@@ -389,6 +438,160 @@ router.get('/', async (req, res) => {
       error: 'Server error',
       message: error.message,
       stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+});
+
+// Add new route for public feed (no adult content)
+router.get('/public/feed', async (req, res) => {
+  try {
+    const { 
+      sort = 'new', 
+      page = 1, 
+      limit = 10 
+    } = req.query;
+    
+    let query = {
+      isAdult: false, // Always exclude adult content
+      isHidden: false
+    };
+    
+    // Determine sort option
+    let sortOption = {};
+    if (sort === 'hot' || sort === 'top') {
+      sortOption = { votes: -1, createdAt: -1 };
+    } else if (sort === 'best') {
+      sortOption = { votes: -1, createdAt: -1 };
+    } else if (sort === 'new') {
+      sortOption = { createdAt: -1 };
+    } else {
+      sortOption = { createdAt: -1 };
+    }
+
+    const pageNum = parseInt(page) || 1;
+    const limitNum = parseInt(limit) || 10;
+    const skip = (pageNum - 1) * limitNum;
+
+    // Fetch posts
+    const posts = await Post.find(query)
+      .sort(sortOption)
+      .skip(skip)
+      .limit(limitNum)
+      .populate('author', 'username karma')
+      .lean();
+
+    // Get total count
+    const total = await Post.countDocuments(query);
+
+    res.json({
+      success: true,
+      posts: posts.map(post => ({
+        _id: post._id,
+        title: post.title || '',
+        content: post.content || '',
+        subreddit: post.subreddit || '',
+        createdAt: post.createdAt || new Date(),
+        authorName: post.author?.username || 'deleted',
+        authorKarma: post.author?.karma || 0,
+        votes: post.votes || 0,
+        commentCount: post.commentCount || 0,
+        isAdult: false, // Always false for public feed
+        externalLink: post.externalLink || null
+      })),
+      page: pageNum,
+      totalPages: Math.ceil(total / limitNum),
+      totalPosts: total,
+      sort: sort,
+      isPublicFeed: true
+    });
+    
+  } catch (error) {
+    console.error('GET /api/posts/public/feed ERROR:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Server error',
+      message: error.message
+    });
+  }
+});
+
+// Add route to get adult content separately
+router.get('/adult', auth, async (req, res) => {
+  try {
+    // Check if user is allowed to view adult content
+    const user = await User.findById(req.user._id);
+    
+    if (!user.settings?.showAdultContent) {
+      return res.status(403).json({
+        success: false,
+        error: 'Adult content viewing is disabled in your settings'
+      });
+    }
+    
+    const { 
+      sort = 'new', 
+      page = 1, 
+      limit = 10 
+    } = req.query;
+    
+    let query = {
+      isAdult: true,
+      isHidden: false
+    };
+    
+    // Determine sort option
+    let sortOption = {};
+    if (sort === 'new') {
+      sortOption = { createdAt: -1 };
+    } else if (sort === 'top') {
+      sortOption = { votes: -1 };
+    } else {
+      sortOption = { createdAt: -1 };
+    }
+
+    const pageNum = parseInt(page) || 1;
+    const limitNum = parseInt(limit) || 10;
+    const skip = (pageNum - 1) * limitNum;
+
+    // Fetch adult posts
+    const posts = await Post.find(query)
+      .sort(sortOption)
+      .skip(skip)
+      .limit(limitNum)
+      .populate('author', 'username karma')
+      .lean();
+
+    // Get total count
+    const total = await Post.countDocuments(query);
+
+    res.json({
+      success: true,
+      posts: posts.map(post => ({
+        _id: post._id,
+        title: post.title || '',
+        content: post.content || '',
+        subreddit: post.subreddit || '',
+        createdAt: post.createdAt || new Date(),
+        authorName: post.author?.username || 'deleted',
+        authorKarma: post.author?.karma || 0,
+        votes: post.votes || 0,
+        commentCount: post.commentCount || 0,
+        isAdult: true,
+        externalLink: post.externalLink || null
+      })),
+      page: pageNum,
+      totalPages: Math.ceil(total / limitNum),
+      totalPosts: total,
+      sort: sort,
+      warning: 'Adult Content - 18+ only'
+    });
+    
+  } catch (error) {
+    console.error('GET /api/posts/adult ERROR:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Server error',
+      message: error.message
     });
   }
 });
@@ -421,7 +624,8 @@ router.get('/trending', async (req, res) => {
     const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
     
     const posts = await Post.find({
-      createdAt: { $gte: twoDaysAgo }
+      createdAt: { $gte: twoDaysAgo },
+      isAdult: false // Exclude adult content from trending
     })
     .populate('author', 'username')
     .sort({ createdAt: -1 })
@@ -470,7 +674,8 @@ router.get('/trending/simple', async (req, res) => {
     const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
     
     const trendingPosts = await Post.find({
-      createdAt: { $gte: oneWeekAgo }
+      createdAt: { $gte: oneWeekAgo },
+      isAdult: false // Exclude adult content
     })
     .populate('author', 'username')
     .sort({ 
@@ -565,6 +770,13 @@ router.get('/user/:username', async (req, res) => {
 
     // 2. Build query to find user's posts
     const query = { author: user._id };
+    
+    // Apply content filtering for user posts
+    const showAdult = req.query.showAdult === 'true';
+    if (!showAdult) {
+      query.isAdult = false;
+    }
+    
     console.log('Query for posts:', query);
 
     // 3. Find posts with pagination
@@ -631,7 +843,8 @@ router.get('/user/:username', async (req, res) => {
         votes: votes,
         commentCount: post.commentCount || 0,
         userVote: userVote,
-        externalLink: post.externalLink || null
+        externalLink: post.externalLink || null,
+        isAdult: post.isAdult || false
       };
     });
 
@@ -656,7 +869,8 @@ router.get('/user/:username', async (req, res) => {
       posts: formattedPosts,
       page: page,
       totalPages: totalPages,
-      totalPosts: total
+      totalPosts: total,
+      showAdult: showAdult
     });
 
   } catch (err) {
@@ -671,8 +885,6 @@ router.get('/user/:username', async (req, res) => {
     });
   }
 });
-
-
 
 // Add this search route in posts.js (add it after the other static routes, before the dynamic routes)
 
@@ -713,7 +925,8 @@ router.get('/search', async (req, res) => {
           { title: { $regex: searchQuery, $options: 'i' } },
           { content: { $regex: searchQuery, $options: 'i' } },
           { subreddit: { $regex: searchQuery, $options: 'i' } }
-        ]
+        ],
+        isAdult: false // Exclude adult content from search by default
       };
 
       try {
@@ -742,7 +955,8 @@ router.get('/search', async (req, res) => {
             commentCount: post.commentCount || 0,
             createdAt: post.createdAt,
             type: 'post',
-            highlight: 'Post'
+            highlight: 'Post',
+            isAdult: post.isAdult || false
           };
         });
 
@@ -946,9 +1160,10 @@ router.get('/search/autocomplete', async (req, res) => {
 
     // Search posts (titles only for autocomplete)
     const posts = await Post.find({
-      title: { $regex: searchQuery, $options: 'i' }
+      title: { $regex: searchQuery, $options: 'i' },
+      isAdult: false // Exclude adult content from autocomplete
     })
-    .select('title subreddit createdAt votes commentCount')
+    .select('title subreddit createdAt votes commentCount isAdult')
     .sort({ createdAt: -1 })
     .limit(3)
     .lean();
@@ -957,7 +1172,8 @@ router.get('/search/autocomplete', async (req, res) => {
       _id: post._id,
       title: post.title,
       subreddit: post.subreddit,
-      type: 'post'
+      type: 'post',
+      isAdult: post.isAdult || false
     }));
 
     // Search communities
@@ -1023,9 +1239,6 @@ router.get('/search/autocomplete', async (req, res) => {
   }
 });
 
-
-
-
 // ====================
 // DYNAMIC ROUTES (/:id) - MUST BE AFTER ALL STATIC ROUTES
 // ====================
@@ -1033,7 +1246,7 @@ router.get('/search/autocomplete', async (req, res) => {
 // Create post
 router.post('/', auth, async (req, res) => {
   try {
-    const { title, content = '', subreddit } = req.body;
+    const { title, content = '', subreddit, isAdult = false } = req.body;
 
     // Validate required fields
     if (!title || !title.trim()) {
@@ -1117,6 +1330,7 @@ router.post('/', auth, async (req, res) => {
       author: req.user._id,
       authorName: req.user.username,
       externalLink,
+      isAdult: Boolean(isAdult), // Add adult content flag
       votes: 0,
       commentCount: 0
     });
@@ -1147,39 +1361,31 @@ router.get('/:id', async (req, res) => {
     const { id } = req.params;
     
     // Check for special routes that might have slipped through
-    if (id === 'count' || id === 'trending' || id === 'subreddits' || id === 'user') {
+    if (id === 'count' || id === 'trending' || id === 'subreddits' || id === 'user' || 
+        id === 'adult' || id === 'public' || id === 'search') {
       return res.status(400).json({ 
         success: false,
         error: 'Invalid post ID' 
       });
     }
-      if (post.slug && param !== post.slug) {
-      return res.redirect(301, `/post/${post.slug}`);
-    }
-
-    res.json(post);
-  } catch (err) {
-    res.status(500).json({ message: "Server error" });
-  }
-});
     
     // Validate ObjectId
     if (!mongoose.Types.ObjectId.isValid(id)) {
+      // Try to find by slug
+      const postBySlug = await Post.findOne({ slug: id })
+        .populate('author', 'username karma bio socialLinks');
+      
+      if (postBySlug) {
+        return handlePostResponse(req, res, postBySlug);
+      }
+      
       return res.status(400).json({ 
         success: false,
         error: 'Invalid post ID format' 
       });
     }
 
-    const param = req.params.id;
-
-const post = await Post.findOne({
-  $or: [
-    { _id: param },
-    { slug: param }
-  ]
-});
-
+    const post = await Post.findById(id)
       .populate('author', 'username karma bio socialLinks');
 
     if (!post) {
@@ -1189,38 +1395,7 @@ const post = await Post.findOne({
       });
     }
 
-    // Increment view count
-    post.viewCount = (post.viewCount || 0) + 1;
-    await post.save();
-
-    // Determine user's vote status if authenticated
-    let userVote = null;
-    if (req.headers.authorization) {
-      try {
-        // Extract token and decode to get user ID
-        const token = req.headers.authorization.split(' ')[1];
-        const jwt = require('jsonwebtoken');
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        const userId = decoded.userId;
-        
-        userVote = post.upvotes?.some(id => id.toString() === userId) ? 'upvote' :
-                   post.downvotes?.some(id => id.toString() === userId) ? 'downvote' : null;
-      } catch (error) {
-        // Token might be invalid or expired, just continue without user vote
-      }
-    }
-
-    // Format the response
-    const responsePost = post.toObject();
-    responsePost.userVote = userVote;
-    responsePost.votes = post.votes || 0;
-    responsePost.commentCount = post.commentCount || 0;
-    responsePost.authorName = post.author?.username;
-
-    res.json({ 
-      success: true,
-      post: responsePost
-    });
+    return handlePostResponse(req, res, post);
   } catch (error) {
     console.error('Error fetching post:', error);
     res.status(500).json({ 
@@ -1229,6 +1404,43 @@ const post = await Post.findOne({
     });
   }
 });
+
+// Helper function for post response
+const handlePostResponse = async (req, res, post) => {
+  // Increment view count
+  post.viewCount = (post.viewCount || 0) + 1;
+  await post.save();
+
+  // Determine user's vote status if authenticated
+  let userVote = null;
+  if (req.headers.authorization) {
+    try {
+      // Extract token and decode to get user ID
+      const token = req.headers.authorization.split(' ')[1];
+      const jwt = require('jsonwebtoken');
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      const userId = decoded.userId;
+      
+      userVote = post.upvotes?.some(id => id.toString() === userId) ? 'upvote' :
+                 post.downvotes?.some(id => id.toString() === userId) ? 'downvote' : null;
+    } catch (error) {
+      // Token might be invalid or expired, just continue without user vote
+    }
+  }
+
+  // Format the response
+  const responsePost = post.toObject();
+  responsePost.userVote = userVote;
+  responsePost.votes = post.votes || 0;
+  responsePost.commentCount = post.commentCount || 0;
+  responsePost.authorName = post.author?.username;
+  responsePost.isAdult = post.isAdult || false;
+
+  res.json({ 
+    success: true,
+    post: responsePost
+  });
+};
 
 // Add comment (NEW Comment model system)
 router.post('/:id/comments', auth, async (req, res) => {

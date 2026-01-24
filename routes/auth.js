@@ -1106,6 +1106,36 @@ router.get('/check-username/:username', async (req, res) => {
   }
 });
 
+
+// Add to your auth.js routes
+router.put('/settings', auth, async (req, res) => {
+  try {
+    const { showAdultContent } = req.body;
+    
+    const user = await User.findById(req.user._id);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    if (!user.settings) {
+      user.settings = {};
+    }
+    
+    user.settings.showAdultContent = showAdultContent;
+    await user.save();
+    
+    res.json({
+      success: true,
+      message: 'Settings updated',
+      settings: user.settings
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+
+
 /* ---------------------------------------------------
    CHECK EMAIL AVAILABILITY
 --------------------------------------------------- */

@@ -102,6 +102,18 @@ const userSchema = new mongoose.Schema({
     type: Date
   },
 
+allowAdultContent: {
+  type: Boolean,
+  default: false
+},
+
+ageVerified: {
+  type: Boolean,
+  default: false
+},
+
+
+
   // Password reset
   resetPasswordToken: String,
   resetPasswordExpires: Date,

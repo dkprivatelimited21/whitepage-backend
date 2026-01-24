@@ -8,13 +8,11 @@ const postSchema = new mongoose.Schema({
     required: true,
     trim: true
   },
-
-slug: {
-  type: String,
-  unique: true,
-  index: true
-},
-
+  slug: {
+    type: String,
+    unique: true,
+    index: true
+  },
   content: {
     type: String,
     required: true
@@ -36,25 +34,30 @@ slug: {
     type: String,
     required: true
   },
-
-externalLink: {
-  url: { type: String },
-  platform: { type: String }, // instagram, youtube, etc
-  title: String,
-  description: String,
-  image: String,
-  video: String,
-  siteName: String
-},
-
-
-
+  externalLink: {
+    url: { type: String },
+    platform: { type: String }, // instagram, youtube, etc
+    title: String,
+    description: String,
+    image: String,
+    video: String,
+    siteName: String
+  },
+  // 🔹 CONTENT FILTERING
+  isAdult: {
+    type: Boolean,
+    default: false,
+    index: true
+  },
+  isHidden: {
+    type: Boolean,
+    default: false
+  },
   // 🔹 COMMENT COUNT (REQUIRED)
   commentCount: {
     type: Number,
     default: 0
   },
-
   upvotes: [{
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
@@ -97,9 +100,6 @@ postSchema.pre("save", async function (next) {
   this.slug = slug;
   next();
 });
-
-
-
 
 // Auto-calculate vote score
 postSchema.pre('save', function (next) {
