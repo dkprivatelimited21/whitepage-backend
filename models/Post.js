@@ -1,5 +1,6 @@
 // models/Post.js
 const mongoose = require('mongoose');
+const slugify = require("slugify");
 
 const postSchema = new mongoose.Schema({
   title: {
@@ -7,6 +8,13 @@ const postSchema = new mongoose.Schema({
     required: true,
     trim: true
   },
+
+slug: {
+  type: String,
+  unique: true,
+  index: true
+},
+
   content: {
     type: String,
     required: true
@@ -70,6 +78,28 @@ externalLink: {
 }, {
   timestamps: true
 });
+
+postSchema.pre("save", async function (next) {
+  if (!this.isModified("title")) return next();
+
+  const baseSlug = slugify(this.title, {
+    lower: true,
+    strict: true,
+  });
+
+  let slug = baseSlug;
+  const exists = await mongoose.models.Post.findOne({ slug });
+
+  if (exists) {
+    slug = `${baseSlug}-${this._id.toString().slice(-6)}`;
+  }
+
+  this.slug = slug;
+  next();
+});
+
+
+
 
 // Auto-calculate vote score
 postSchema.pre('save', function (next) {

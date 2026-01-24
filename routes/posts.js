@@ -1153,6 +1153,15 @@ router.get('/:id', async (req, res) => {
         error: 'Invalid post ID' 
       });
     }
+      if (post.slug && param !== post.slug) {
+      return res.redirect(301, `/post/${post.slug}`);
+    }
+
+    res.json(post);
+  } catch (err) {
+    res.status(500).json({ message: "Server error" });
+  }
+});
     
     // Validate ObjectId
     if (!mongoose.Types.ObjectId.isValid(id)) {
@@ -1162,7 +1171,15 @@ router.get('/:id', async (req, res) => {
       });
     }
 
-    const post = await Post.findById(id)
+    const param = req.params.id;
+
+const post = await Post.findOne({
+  $or: [
+    { _id: param },
+    { slug: param }
+  ]
+});
+
       .populate('author', 'username karma bio socialLinks');
 
     if (!post) {

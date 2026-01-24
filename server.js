@@ -41,6 +41,7 @@ if (!process.env.JWT_SECRET) {
 const allowedOrigins = [
   'https://whitepage-one.vercel.app',
   'http://localhost:3000',
+  'capacitor://localhost'
 ];
 
 app.use(cors({
