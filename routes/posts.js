@@ -11,32 +11,54 @@ const URL_REGEX = /(https?:\/\/[^\s]+)/g;
 const ogs = require('open-graph-scraper');
 const authMiddleware = require('../middleware/auth');
 
-const ALLOWED_DOMAINS = [
-  'instagram.com',
-  'facebook.com',
-  'fb.watch',
-  'youtube.com',
-  'youtu.be',
-  'twitter.com',
-  'x.com',
-  'snapchat.com'
-];
+// REMOVED ALLOWED_DOMAINS - Accept all URLs
+// const ALLOWED_DOMAINS = [
+//   'instagram.com',
+//   'facebook.com',
+//   'fb.watch',
+//   'youtube.com',
+//   'youtu.be',
+//   'twitter.com',
+//   'x.com',
+//   'snapchat.com'
+// ];
 
 function extractLinks(text = '') {
   return text.match(URL_REGEX) || [];
 }
 
-function isAllowedPlatform(url) {
-  return ALLOWED_DOMAINS.some(domain => url.includes(domain));
-}
+// REMOVED domain validation - Accept all URLs
+// function isAllowedPlatform(url) {
+//   return ALLOWED_DOMAINS.some(domain => url.includes(domain));
+// }
 
 function detectPlatform(url) {
-  if (url.includes('instagram.com')) return 'instagram';
-  if (url.includes('facebook.com') || url.includes('fb.watch')) return 'facebook';
-  if (url.includes('youtube.com') || url.includes('youtu.be')) return 'youtube';
-  if (url.includes('twitter.com') || url.includes('x.com')) return 'twitter';
-  if (url.includes('snapchat.com')) return 'snapchat';
-  return 'unknown';
+  try {
+    const urlObj = new URL(url);
+    const hostname = urlObj.hostname;
+    
+    if (hostname.includes('instagram.com')) return 'instagram';
+    if (hostname.includes('facebook.com') || hostname.includes('fb.watch')) return 'facebook';
+    if (hostname.includes('youtube.com') || hostname.includes('youtu.be')) return 'youtube';
+    if (hostname.includes('twitter.com') || hostname.includes('x.com')) return 'twitter';
+    if (hostname.includes('snapchat.com')) return 'snapchat';
+    if (hostname.includes('reddit.com')) return 'reddit';
+    if (hostname.includes('imgur.com')) return 'imgur';
+    if (hostname.includes('tiktok.com')) return 'tiktok';
+    if (hostname.includes('pinterest.com')) return 'pinterest';
+    if (hostname.includes('linkedin.com')) return 'linkedin';
+    if (hostname.includes('github.com')) return 'github';
+    if (hostname.includes('medium.com')) return 'medium';
+    
+    // Check for common video/image/generic sites
+    if (hostname.includes('.com') || hostname.includes('.org') || hostname.includes('.net')) {
+      return 'website';
+    }
+    
+    return 'external';
+  } catch (error) {
+    return 'unknown';
+  }
 }
 
 // ====================
@@ -246,6 +268,7 @@ router.get('/votes/:postId/status', auth, async (req, res) => {
 
 /* ---------------------------------------------------
    PREVIEW LINK - MUST BE BEFORE DYNAMIC ROUTES
+   Updated to handle all URLs without restrictions
 --------------------------------------------------- */
 router.post('/preview-link', auth, async (req, res) => {
   const { url } = req.body;
@@ -256,6 +279,13 @@ router.post('/preview-link', auth, async (req, res) => {
   }
 
   try {
+    // Validate URL format
+    try {
+      new URL(url);
+    } catch (urlError) {
+      return res.status(400).json({ error: 'Invalid URL format' });
+    }
+
     const { result } = await ogs({
       url,
       timeout: 5000,
@@ -265,42 +295,74 @@ router.post('/preview-link', auth, async (req, res) => {
       }
     });
 
-    // If no metadata → return null (frontend shows clickable link)
+    // If no metadata → return minimal info with URL
     if (!result.success) {
-      return res.json(null);
+      return res.json({
+        url: url,
+        title: 'Link Preview',
+        description: 'Click to visit this link',
+        siteName: new URL(url).hostname,
+        image: null,
+        video: null
+      });
     }
 
     res.json({
       title:
         result.ogTitle ||
         result.twitterTitle ||
-        '',
+        result.dcTitle ||
+        result.title ||
+        'Link Preview',
 
       description:
         result.ogDescription ||
         result.twitterDescription ||
-        '',
+        result.dcDescription ||
+        result.description ||
+        'Click to visit this link',
 
       image:
         result.ogImage?.url ||
         result.twitterImage?.url ||
         null,
 
-      // Optional: thumbnail-only video support
       video:
         result.ogVideo?.url ||
         null,
 
       siteName:
         result.ogSiteName ||
+        result.twitterSite ||
         new URL(url).hostname,
 
       url
     });
 
   } catch (err) {
-    // Graceful fallback — NEVER block the post
-    return res.json(null);
+    console.error('Preview error for URL:', url, err);
+    
+    // Graceful fallback — return minimal preview info
+    try {
+      const urlObj = new URL(url);
+      return res.json({
+        url: url,
+        title: 'External Link',
+        description: 'This link will open in a new tab',
+        siteName: urlObj.hostname,
+        image: null,
+        video: null
+      });
+    } catch (urlError) {
+      return res.json({
+        url: url,
+        title: 'External Link',
+        description: 'Click to visit this link',
+        siteName: 'website',
+        image: null,
+        video: null
+      });
+    }
   }
 });
 
@@ -1278,7 +1340,7 @@ router.get('/search/autocomplete', async (req, res) => {
 // DYNAMIC ROUTES (/:id) - MUST BE AFTER ALL STATIC ROUTES
 // ====================
 
-// Create post
+// Create post - UPDATED TO ACCEPT ALL URLS
 router.post('/', auth, async (req, res) => {
   try {
     const { title, content = '', subreddit, isAdult = false } = req.body;
@@ -1309,7 +1371,7 @@ router.post('/', auth, async (req, res) => {
     // Extract links
     const links = extractLinks(content);
 
-    // Enforce ONE link
+    // Enforce ONE link (but allow any URL)
     if (links.length > 1) {
       return res.status(400).json({ 
         success: false,
@@ -1322,39 +1384,50 @@ router.post('/', auth, async (req, res) => {
     if (links.length === 1) {
       const url = links[0];
 
+      // Validate URL format
       try {
         new URL(url);
       } catch {
         return res.status(400).json({ 
           success: false,
-          error: 'Invalid URL' 
+          error: 'Invalid URL format' 
         });
       }
 
-      if (!isAllowedPlatform(url)) {
-        return res.status(400).json({ 
-          success: false,
-          error: 'Unsupported platform link' 
-        });
-      }
+      // REMOVED domain restriction - Accept all URLs
+      // if (!isAllowedPlatform(url)) {
+      //   return res.status(400).json({ 
+      //     success: false,
+      //     error: 'Unsupported platform link' 
+      //   });
+      // }
 
+      // Try to fetch Open Graph data, but don't fail if it doesn't work
       let result = {};
       try {
-        const ogResponse = await ogs({ url });
+        const ogResponse = await ogs({ 
+          url,
+          timeout: 3000, // Shorter timeout
+          followRedirect: true,
+          headers: {
+            'user-agent': 'Mozilla/5.0 (LinkPreviewBot)'
+          }
+        });
         result = ogResponse.result || {};
       } catch (err) {
-        // Allow post creation without preview metadata
+        console.log('Open Graph fetch failed for URL:', url, err.message);
+        // Continue without preview metadata
         result = {};
       }
 
       externalLink = {
         url,
         platform: detectPlatform(url),
-        title: result.ogTitle,
-        description: result.ogDescription,
-        image: result.ogImage?.url,
-        video: result.ogVideo?.url,
-        siteName: result.ogSiteName
+        title: result.ogTitle || result.twitterTitle || null,
+        description: result.ogDescription || result.twitterDescription || null,
+        image: result.ogImage?.url || result.twitterImage?.url || null,
+        video: result.ogVideo?.url || null,
+        siteName: result.ogSiteName || result.twitterSite || new URL(url).hostname
       };
     }
 
