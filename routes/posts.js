@@ -250,25 +250,58 @@ router.get('/votes/:postId/status', auth, async (req, res) => {
 router.post('/preview-link', auth, async (req, res) => {
   const { url } = req.body;
 
-  if (!isAllowedPlatform(url)) {
-    return res.status(400).json({ error: 'Platform not supported' });
+  // Basic URL validation only
+  if (!url || !/^https?:\/\//i.test(url)) {
+    return res.status(400).json({ error: 'Invalid URL' });
   }
 
-  let result;
   try {
-    const ogResponse = await ogs({ url });
-    result = ogResponse.result;
-  } catch (err) {
-    return res.status(400).json({ error: 'Failed to fetch link preview' });
-  }
+    const { result } = await ogs({
+      url,
+      timeout: 5000,
+      followRedirect: true,
+      headers: {
+        'user-agent': 'Mozilla/5.0 (LinkPreviewBot)'
+      }
+    });
 
-  res.json({
-    title: result.ogTitle,
-    description: result.ogDescription,
-    image: result.ogImage?.url,
-    video: result.ogVideo?.url,
-    siteName: result.ogSiteName
-  });
+    // If no metadata → return null (frontend shows clickable link)
+    if (!result.success) {
+      return res.json(null);
+    }
+
+    res.json({
+      title:
+        result.ogTitle ||
+        result.twitterTitle ||
+        '',
+
+      description:
+        result.ogDescription ||
+        result.twitterDescription ||
+        '',
+
+      image:
+        result.ogImage?.url ||
+        result.twitterImage?.url ||
+        null,
+
+      // Optional: thumbnail-only video support
+      video:
+        result.ogVideo?.url ||
+        null,
+
+      siteName:
+        result.ogSiteName ||
+        new URL(url).hostname,
+
+      url
+    });
+
+  } catch (err) {
+    // Graceful fallback — NEVER block the post
+    return res.json(null);
+  }
 });
 
 // ====================
