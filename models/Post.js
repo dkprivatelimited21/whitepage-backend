@@ -36,14 +36,13 @@ const postSchema = new mongoose.Schema({
   },
   externalLink: {
     url: { type: String },
-    platform: { type: String }, // instagram, youtube, etc
+    platform: { type: String },
     title: String,
     description: String,
     image: String,
     video: String,
     siteName: String
   },
-  // 🔹 CONTENT FILTERING
   isAdult: {
     type: Boolean,
     default: false,
@@ -53,7 +52,6 @@ const postSchema = new mongoose.Schema({
     type: Boolean,
     default: false
   },
-  // 🔹 COMMENT COUNT (REQUIRED)
   commentCount: {
     type: Number,
     default: 0
@@ -70,6 +68,10 @@ const postSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
+  viewCount: {
+    type: Number,
+    default: 0
+  },
   isLocked: {
     type: Boolean,
     default: false
@@ -82,6 +84,7 @@ const postSchema = new mongoose.Schema({
   timestamps: true
 });
 
+// Generate slug before saving
 postSchema.pre("save", async function (next) {
   if (!this.isModified("title")) return next();
 
@@ -94,7 +97,7 @@ postSchema.pre("save", async function (next) {
   const exists = await mongoose.models.Post.findOne({ slug });
 
   if (exists) {
-    slug = `${baseSlug}-${this._id.toString().slice(-6)}`;
+    slug = `${baseSlug}-${Date.now().toString().slice(-6)}`;
   }
 
   this.slug = slug;
@@ -106,6 +109,18 @@ postSchema.pre('save', function (next) {
   const upvoteCount = this.upvotes?.length || 0;
   const downvoteCount = this.downvotes?.length || 0;
   this.votes = upvoteCount - downvoteCount;
+  next();
+});
+
+// Ensure slug exists for old posts
+postSchema.pre('save', async function (next) {
+  if (!this.slug && this.title) {
+    const baseSlug = slugify(this.title, {
+      lower: true,
+      strict: true,
+    });
+    this.slug = `${baseSlug}-${Date.now().toString().slice(-6)}`;
+  }
   next();
 });
 
