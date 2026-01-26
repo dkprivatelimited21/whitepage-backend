@@ -1,4 +1,3 @@
-
 const express = require('express');
 const router = express.Router();
 const auth = require('../middleware/auth');
@@ -10,7 +9,6 @@ const mongoose = require('mongoose');
 const MAX_CONTENT_LENGTH = 2000;
 const URL_REGEX = /(https?:\/\/[^\s]+)/g;
 const ogs = require('open-graph-scraper');
-const authMiddleware = require('../middleware/auth');
 const slugify = require('slugify');
 
 function extractLinks(text = '') {
@@ -69,6 +67,7 @@ const applyContentFilter = (req, query) => {
 // VOTE ROUTES
 // ====================
 
+// FIXED: This is the correct endpoint for voting
 router.post('/votes/:postId/:type', auth, async (req, res) => {
   try {
     const { postId, type } = req.params;
@@ -102,7 +101,7 @@ router.post('/votes/:postId/:type', auth, async (req, res) => {
       });
     }
     
-    // Check if user is the post author (optional: prevent self-voting)
+    // Check if user is the post author
     if (post.author.toString() === req.user._id.toString()) {
       return res.status(400).json({ 
         success: false,
@@ -115,8 +114,6 @@ router.post('/votes/:postId/:type', auth, async (req, res) => {
     // Check existing votes
     const hasUpvoted = post.upvotes?.some(id => id.toString() === userId) || false;
     const hasDownvoted = post.downvotes?.some(id => id.toString() === userId) || false;
-    
-    let updatedPost;
     
     if (type === 'upvote') {
       if (hasUpvoted) {
@@ -151,10 +148,10 @@ router.post('/votes/:postId/:type', auth, async (req, res) => {
     await post.save();
     
     // Populate author for response
-    updatedPost = await Post.findById(post._id)
+    const updatedPost = await Post.findById(post._id)
       .populate('author', 'username');
     
-    // Update user's karma if applicable
+    // Update user's karma
     if (type === 'upvote' && !hasUpvoted) {
       await User.findByIdAndUpdate(post.author, { $inc: { karma: 1 } });
     } else if (type === 'downvote' && !hasDownvoted) {
@@ -196,21 +193,29 @@ router.post('/votes/:postId/:type', auth, async (req, res) => {
 });
 
 // ====================
-// PREVIEW LINK
+// LINK PREVIEW ENDPOINT (NEW)
 // ====================
 
-router.post('/preview-link', auth, async (req, res) => {
-  const { url } = req.body;
-
-  if (!url || !/^https?:\/\//i.test(url)) {
-    return res.status(400).json({ error: 'Invalid URL' });
-  }
-
+// ADD THIS NEW ENDPOINT for link previews from frontend
+router.get('/utils/link-preview', async (req, res) => {
   try {
+    const { url } = req.query;
+    
+    if (!url || !/^https?:\/\//i.test(url)) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Invalid URL' 
+      });
+    }
+
+    // Validate URL format
     try {
       new URL(url);
     } catch (urlError) {
-      return res.status(400).json({ error: 'Invalid URL format' });
+      return res.status(400).json({ 
+        success: false,
+        error: 'Invalid URL format' 
+      });
     }
 
     const { result } = await ogs({
@@ -224,47 +229,122 @@ router.post('/preview-link', auth, async (req, res) => {
 
     if (!result.success) {
       return res.json({
-        url: url,
-        title: 'Link Preview',
-        description: 'Click to visit this link',
-        siteName: new URL(url).hostname,
-        image: null,
-        video: null
+        success: true,
+        preview: {
+          url: url,
+          title: 'Link Preview',
+          description: 'Click to visit this link',
+          siteName: new URL(url).hostname,
+          image: null,
+          video: null
+        }
       });
     }
 
     res.json({
-      title: result.ogTitle || result.twitterTitle || result.dcTitle || result.title || 'Link Preview',
-      description: result.ogDescription || result.twitterDescription || result.dcDescription || result.description || 'Click to visit this link',
-      image: result.ogImage?.url || result.twitterImage?.url || null,
-      video: result.ogVideo?.url || null,
-      siteName: result.ogSiteName || result.twitterSite || new URL(url).hostname,
-      url
+      success: true,
+      preview: {
+        title: result.ogTitle || result.twitterTitle || result.dcTitle || result.title || 'Link Preview',
+        description: result.ogDescription || result.twitterDescription || result.dcDescription || result.description || 'Click to visit this link',
+        image: result.ogImage?.url || result.twitterImage?.url || null,
+        video: result.ogVideo?.url || null,
+        siteName: result.ogSiteName || result.twitterSite || new URL(url).hostname,
+        url: url
+      }
     });
 
   } catch (err) {
-    console.error('Preview error for URL:', url, err);
+    console.error('Link preview error:', err);
     
     try {
       const urlObj = new URL(url);
       return res.json({
-        url: url,
-        title: 'External Link',
-        description: 'This link will open in a new tab',
-        siteName: urlObj.hostname,
-        image: null,
-        video: null
+        success: true,
+        preview: {
+          url: url,
+          title: 'External Link',
+          description: 'This link will open in a new tab',
+          siteName: urlObj.hostname,
+          image: null,
+          video: null
+        }
       });
     } catch (urlError) {
       return res.json({
-        url: url,
-        title: 'External Link',
-        description: 'Click to visit this link',
-        siteName: 'website',
-        image: null,
-        video: null
+        success: true,
+        preview: {
+          url: url,
+          title: 'External Link',
+          description: 'Click to visit this link',
+          siteName: 'website',
+          image: null,
+          video: null
+        }
       });
     }
+  }
+});
+
+// ====================
+// POST SAVE ENDPOINT (NEW)
+// ====================
+
+// ADD THIS NEW ENDPOINT for saving posts
+router.post('/:identifier/save', auth, async (req, res) => {
+  try {
+    const { identifier } = req.params;
+    
+    // Find post by slug or ID
+    let post;
+    post = await Post.findOne({ slug: identifier });
+    
+    if (!post && mongoose.Types.ObjectId.isValid(identifier)) {
+      post = await Post.findById(identifier);
+    }
+    
+    if (!post) {
+      return res.status(404).json({ 
+        success: false,
+        error: 'Post not found' 
+      });
+    }
+    
+    // Check if user already saved this post
+    const user = await User.findById(req.user._id);
+    const alreadySaved = user.savedPosts?.some(savedPostId => 
+      savedPostId.toString() === post._id.toString()
+    );
+    
+    if (alreadySaved) {
+      // Remove from saved
+      await User.findByIdAndUpdate(req.user._id, {
+        $pull: { savedPosts: post._id }
+      });
+      
+      return res.json({
+        success: true,
+        message: 'Post removed from saved',
+        saved: false
+      });
+    } else {
+      // Add to saved
+      await User.findByIdAndUpdate(req.user._id, {
+        $addToSet: { savedPosts: post._id }
+      });
+      
+      return res.json({
+        success: true,
+        message: 'Post saved successfully',
+        saved: true
+      });
+    }
+    
+  } catch (error) {
+    console.error('Error saving post:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to save post' 
+    });
   }
 });
 
