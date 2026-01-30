@@ -36,21 +36,44 @@ if (!process.env.JWT_SECRET) {
 }
 
 /* ---------------------------------------------------
-   CORS CONFIG (UPDATED FOR PREFLIGHT REQUESTS)
+   CORS CONFIG (COMPREHENSIVE FIX)
 --------------------------------------------------- */
 const allowedOrigins = [
   'https://whitepage-one.vercel.app',
+  'http://localhost:3000',
   'capacitor://localhost'
 ];
 
+// Debug middleware to log CORS requests
+app.use((req, res, next) => {
+  console.log(`${new Date().toISOString()} ${req.method} ${req.url}`);
+  console.log('Origin:', req.headers.origin);
+  console.log('User-Agent:', req.headers['user-agent']);
+  next();
+});
+
+// Handle preflight OPTIONS requests
+app.options('*', cors({
+  origin: allowedOrigins,
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  maxAge: 86400
+}));
+
+// Main CORS middleware
 app.use(cors({
   origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps, Postman)
-    if (!origin) return callback(null, true);
+    // Allow requests with no origin (like mobile apps, Postman, curl)
+    if (!origin) {
+      return callback(null, true);
+    }
     
-    if (allowedOrigins.indexOf(origin) !== -1) {
+    // Check if origin is in allowed list
+    if (allowedOrigins.includes(origin)) {
       callback(null, origin);
     } else {
+      console.warn(`Blocked by CORS: ${origin}`);
       callback(new Error('Not allowed by CORS'));
     }
   },
@@ -58,10 +81,29 @@ app.use(cors({
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
   exposedHeaders: ['Content-Length', 'X-Requested-With'],
-  maxAge: 86400, // 24 hours for preflight cache
-  preflightContinue: false,
-  optionsSuccessStatus: 204
+  maxAge: 86400,
+  optionsSuccessStatus: 200
 }));
+
+// Manual CORS headers as backup
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  
+  if (allowedOrigins.includes(origin)) {
+    res.header('Access-Control-Allow-Origin', origin);
+    res.header('Access-Control-Allow-Credentials', 'true');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, PATCH, OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
+    
+    // Handle preflight requests
+    if (req.method === 'OPTIONS') {
+      return res.status(200).end();
+    }
+  }
+  
+  next();
+});
+
 /* ---------------------------------------------------
    BODY PARSER
 --------------------------------------------------- */
@@ -72,16 +114,20 @@ app.use(express.json({ limit: '10kb' }));
 --------------------------------------------------- */
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100,
+  max: 1000, // Increased for testing
   standardHeaders: true,
   legacyHeaders: false,
+  skip: (req) => {
+    // Skip rate limiting for OPTIONS requests (preflight)
+    return req.method === 'OPTIONS';
+  }
 });
 
 app.use('/api/', globalLimiter);
 
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 5,
+  max: 10,
   skipSuccessfulRequests: true,
 });
 
@@ -126,12 +172,25 @@ mongoose
    ERROR HANDLERS
 --------------------------------------------------- */
 app.use((err, req, res, next) => {
-  console.error(err.message);
-
+  console.error('Error:', err.message);
+  
+  // CORS errors
   if (err.message === 'Not allowed by CORS') {
-    return res.status(403).json({ error: 'CORS blocked this request' });
+    return res.status(403).json({ 
+      error: 'CORS blocked this request',
+      allowedOrigins,
+      yourOrigin: req.headers.origin 
+    });
   }
-
+  
+  // Rate limit errors
+  if (err.name === 'RateLimitError') {
+    return res.status(429).json({
+      error: 'Too many requests, please try again later.'
+    });
+  }
+  
+  // General errors
   res.status(err.status || 500).json({
     error: err.message || 'Internal Server Error',
   });
@@ -150,4 +209,5 @@ app.use((req, res) => {
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`✅ Allowed origins: ${allowedOrigins.join(', ')}`);
 });
