@@ -36,30 +36,32 @@ if (!process.env.JWT_SECRET) {
 }
 
 /* ---------------------------------------------------
-   CORS CONFIG (FIXED – NO WILDCARDS)
+   CORS CONFIG (UPDATED FOR PREFLIGHT REQUESTS)
 --------------------------------------------------- */
 const allowedOrigins = [
   'https://whitepage-one.vercel.app',
-  'http://localhost:3000',
   'capacitor://localhost'
 ];
 
 app.use(cors({
-  origin: (origin, callback) => {
-    // Allow non-browser requests (Postman, mobile apps)
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps, Postman)
     if (!origin) return callback(null, true);
-
-    if (allowedOrigins.includes(origin)) {
-      return callback(null, origin); // reflect exact origin
+    
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, origin);
+    } else {
+      callback(new Error('Not allowed by CORS'));
     }
-
-    return callback(new Error('Not allowed by CORS'));
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+  exposedHeaders: ['Content-Length', 'X-Requested-With'],
+  maxAge: 86400, // 24 hours for preflight cache
+  preflightContinue: false,
+  optionsSuccessStatus: 204
 }));
-
 /* ---------------------------------------------------
    BODY PARSER
 --------------------------------------------------- */
